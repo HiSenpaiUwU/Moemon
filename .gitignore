@@ -1,0 +1,4 @@
+.env
+data/moemon.sqlite
+data/*.sqlite
+node_modules/
