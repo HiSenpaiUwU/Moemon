@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   CONTENT,
   config,
@@ -4888,7 +4889,7 @@ function renderPage(response, params) {
   html(response, 200, layout(params));
 }
 
-const server = http.createServer(async (request, response) => {
+export async function handleRequest(request, response) {
   const url = new URL(request.url, config.appOrigin);
   const pathname = url.pathname;
 
@@ -5734,11 +5735,21 @@ const server = http.createServer(async (request, response) => {
     console.error(error);
     html(response, 500, layout({ title: 'Server Error', user, flash, body: `<section class="panel"><h1>Server error</h1><p class="muted">${escapeHtml(error.message)}</p></section>` }));
   }
-});
+}
 
-server.listen(config.port, () => {
-  console.log(`Moemon Arena listening on ${config.appOrigin}`);
-});
+export const server = http.createServer(handleRequest);
+
+const isDirectRun = !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isDirectRun) {
+  server.listen(config.port, () => {
+    console.log(`Moemon Arena listening on ${config.appOrigin}`);
+  });
+}
+
+
+
+
 
 
 

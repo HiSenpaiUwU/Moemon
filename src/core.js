@@ -30,9 +30,12 @@ function loadEnv() {
 
 loadEnv();
 
+const inferredAppOrigin = process.env.APP_ORIGIN
+  || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:${process.env.PORT || 3000}`);
+
 export const config = {
   port: Number(process.env.PORT || 3000),
-  appOrigin: process.env.APP_ORIGIN || `http://localhost:${process.env.PORT || 3000}`,
+  appOrigin: inferredAppOrigin,
   sessionCookieName: process.env.SESSION_COOKIE_NAME || 'moemon_session',
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS || 168),
   smtpHost: process.env.SMTP_HOST || '',
@@ -3079,7 +3082,10 @@ export function persistentItemUnitPrice(itemOrSlug, userId = 0, reference = new 
   return Math.max(100, Math.round(basePrice * (1 - world.marketRotation.discount)));
 }
 
-const dbPath = path.join(process.cwd(), 'data', 'moemon.sqlite');
+const defaultDbPath = process.env.VERCEL
+  ? path.join('/tmp', 'moemon.sqlite')
+  : path.join(process.cwd(), 'data', 'moemon.sqlite');
+const dbPath = process.env.MOEMON_DB_PATH || defaultDbPath;
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 export const db = new DatabaseSync(dbPath);
 db.exec('PRAGMA foreign_keys = ON');
@@ -10825,6 +10831,7 @@ export function purchasePersistentItem(userId, itemSlug, quantity = 1) {
   saveUserMeta(userId, user.meta);
   return getUserById(userId);
 }
+
 
 
 
