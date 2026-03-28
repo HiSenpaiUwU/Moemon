@@ -1,4 +1,4 @@
-﻿import http from 'node:http';
+import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,6 +72,7 @@ import {
   exchangeMiniGameInventoryItem,
   exchangeMiniGameMonster,
   getNewsState,
+  getEventsState,
   getMapState,
   searchMapRoute,
   startMapSearchEncounter,
@@ -85,6 +86,7 @@ import {
   resetTrainerSkills,
   claimMissionReward,
   restoreSignedDeviceSave,
+  transformationModesForSpecies,
 } from './core.js';
 import { getBuildDexState } from './builddex.js';
 
@@ -528,6 +530,7 @@ function layout({ title, user, flash, body, wide = false, world = null }) {
   const userSprite = user ? (CONTENT.playerSpriteMap.get(user.meta.avatarSlug) || CONTENT.playerSprites[0]) : null;
   const activeRun = user ? getRunSnapshot(user.id) : null;
   const pageSlug = String(title || 'page').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'page';
+  const isAdminUser = user?.role === 'admin';
   const commandMenus = user ? [
     renderCommandMenu('Maps', [
       { label: 'Hub', href: '/hub', description: 'Main command deck, missions, and current activity.', glyph: 'HB', tag: 'Live', tone: 'maps' },
@@ -557,7 +560,8 @@ function layout({ title, user, flash, body, wide = false, world = null }) {
     renderCommandMenu('Misc', [
       { label: 'News', href: '/news', description: 'Keep up with rotating bosses, routes, and world effects.', glyph: 'FX', tag: 'World', tone: 'misc' },
       { label: 'Settings', href: '/settings', description: 'Tweak the presentation so the game feels easier to parse.', glyph: 'UI', tag: 'Tune', tone: 'misc' },
-      ...(user.role === 'admin'
+      { label: 'Events', href: '/events', description: 'See limited banners, RNG catches, save status, and live rotations.', glyph: 'EV', tag: 'Live', tone: 'misc' },
+      ...(isAdminUser
         ? [{ label: 'Admin', href: '/admin', description: 'Moderation, grants, and account-side game controls.', glyph: 'AD', tag: 'Tools', tone: 'misc' }]
         : []),
     ]),
@@ -608,9 +612,9 @@ function layout({ title, user, flash, body, wide = false, world = null }) {
         <strong>Arcade</strong>
         <small>Prize wheel, aura jackpot, and token farming loops.</small>
       </a>
-      <a class="mobile-quick-card tone-maps" href="/news">
+      <a class="mobile-quick-card tone-maps" href="/events">
         <strong>Daily Pulse</strong>
-        <small>See route rotations, events, and live spotlights fast.</small>
+        <small>See limited banners, live events, and account-save status fast.</small>
       </a>
     </section>
   ` : '';
@@ -1247,6 +1251,7 @@ function renderSettings(state) {
           <div class="button-row gap-top">
             <a class="button ghost" href="/trainer-card">Open Trainer Card</a>
             <a class="button ghost" href="/builds">Open Build Dex</a>
+            <a class="button ghost" href="/events">Open Events</a>
           </div>
         </article>
       </section>
@@ -1306,6 +1311,25 @@ function renderSettings(state) {
         <section class="panelish settings-card nested-panel">
           <h2>Chat Emoji Strip</h2>
           <div class="settings-choice-grid">${emojiSetCards}</div>
+        </section>
+        <section class="grid-two settings-grid">
+          <article class="panelish settings-card nested-panel">
+            <h2>Save & Recovery</h2>
+            <p class="muted">Accounts, trainer progress, collection, inventory, and runs save automatically. Signed device restore is also generated for this browser so account recovery is easier.</p>
+            <div class="badge-row compact-row gap-top">
+              ${badge(`Lv ${formatNumber(state.progression?.profile?.level || 1)}`, 'success')}
+              ${badge(`${formatNumber(state.capturedCollection?.length || 0)} stored`, 'default')}
+              ${badge(`${formatNumber(state.favoriteEntries?.length || 0)} favorites`, 'warning')}
+            </div>
+          </article>
+          <article class="panelish settings-card nested-panel">
+            <h2>Event Relay</h2>
+            <p class="muted">Need the current limited anime banner, RNG catch targets, or event timers? The Events page now lives beside Settings in Misc.</p>
+            <div class="button-row gap-top">
+              <a class="button ghost" href="/events">Open Events</a>
+              <a class="button ghost" href="/news">Open News</a>
+            </div>
+          </article>
         </section>
         <div class="button-row gap-top">
           <button class="button primary" type="submit">Save Settings</button>
@@ -2424,6 +2448,18 @@ function renderBuildGuideMoveCard(row, options = {}) {
     </article>`;
 }
 
+function renderTransformationBadges(modes = []) {
+  const labels = {
+    mega: 'Mega',
+    ultra: 'Ultra Burst',
+    dynamax: 'Dynamax',
+    variant: 'Variant',
+  };
+  return modes.length
+    ? modes.map((mode) => badge(labels[mode] || titleLabel(mode), 'default')).join(' ')
+    : badge('No transformations', 'default');
+}
+
 function renderBuildDexPage(state) {
   const selected = state.selected;
   if (!selected) {
@@ -2443,6 +2479,10 @@ function renderBuildDexPage(state) {
   const noteList = selected.notes.length
     ? selected.notes.map((entry) => `<li>${escapeHtml(entry)}</li>`).join('')
     : '<li>Solid all-around entry with no extra pilot warnings.</li>';
+  const transformationBadges = renderTransformationBadges(selected.transformation?.modes || []);
+  const limitedUnitBadges = selected.limitedEdition
+    ? `${badge(selected.limitedSeries || 'Limited', 'warning')} ${badge(selected.limitedBanner || 'Special Rotation', 'default')}`
+    : badge('Standard roster', 'default');
   const previewCards = state.guides.map((guide) => `
     <article class="panelish build-preview-card ${guide.slug === selected.slug ? 'is-active' : ''}" data-build-card data-search="${escapeHtml(guide.searchText)}" data-types="${escapeHtml(guide.types.join(','))}" data-role="${escapeHtml(guide.roleKey)}" data-stage="${formatNumber(guide.stage)}">
       <div class="build-preview-head">
@@ -2455,12 +2495,13 @@ function renderBuildDexPage(state) {
             </div>
             ${badge(`Stage ${formatNumber(guide.stage)}`, 'default')}
           </div>
-          <div class="badge-row compact-row">${guide.types.map((type) => badge(titleLabel(type), type)).join(' ')}</div>
+          <div class="badge-row compact-row">${guide.types.map((type) => badge(titleLabel(type), type)).join(' ')} ${guide.limitedEdition ? badge('Limited', 'warning') : ''}</div>
         </div>
       </div>
       <p class="muted build-preview-line">${escapeHtml(guide.ability?.name || 'Battle Aura')} &middot; ${escapeHtml(guide.nature?.name || 'Neutral')} &middot; ${escapeHtml(guide.item?.name || 'No item')}</p>
       <p class="muted build-preview-line"><strong>EV:</strong> ${escapeHtml(guide.evSummary || 'No EV build')}</p>
       <p class="muted build-preview-line"><strong>IV:</strong> ${escapeHtml(guide.ivSummary || '31 all')}</p>
+      <p class="muted build-preview-line"><strong>Transform:</strong> ${escapeHtml(guide.transformation?.primaryLabel || 'Base Form Only')}</p>
       <div class="badge-row compact-row build-preview-badges">${guide.coreMoves.slice(0, 4).map((move) => badge(move.name, move.category === 'status' ? 'default' : 'success')).join(' ')}</div>
       <div class="button-row gap-top">
         <a class="button ${guide.slug === selected.slug ? 'primary' : 'ghost'}" href="/builds/${escapeHtml(guide.slug)}">${guide.slug === selected.slug ? 'Viewing Guide' : 'Open Guide'}</a>
@@ -2479,6 +2520,7 @@ function renderBuildDexPage(state) {
           ${badge(`${formatNumber(state.guides.length)} guides`, 'success')}
           ${badge(`${formatNumber(selected.moveCount)} moves listed`, 'warning')}
           ${badge(selected.roleLabel, 'default')}
+          ${selected.limitedEdition ? badge('Limited', 'warning') : ''}
         </div>
       </div>
 
@@ -2494,6 +2536,7 @@ function renderBuildDexPage(state) {
                 ${selected.types.map((type) => badge(titleLabel(type), type)).join(' ')}
                 ${badge(selected.rarity, selected.rarity === 'legendary' || selected.rarity === 'mythic' ? 'warning' : selected.rarity === 'epic' ? 'psychic' : 'default')}
                 ${badge(`Stage ${formatNumber(selected.stage)}`, 'default')}
+                ${limitedUnitBadges}
               </div>
             </div>
           </div>
@@ -2501,6 +2544,7 @@ function renderBuildDexPage(state) {
             <div class="stat-card"><strong>${escapeHtml(selected.ability?.name || 'Battle Aura')}</strong><span>best ability</span></div>
             <div class="stat-card"><strong>${escapeHtml(selected.nature?.name || 'Neutral')}</strong><span>recommended nature</span></div>
             <div class="stat-card"><strong>${escapeHtml(selected.item?.name || 'No item')}</strong><span>main held item</span></div>
+            <div class="stat-card"><strong>${escapeHtml(selected.transformation?.primaryLabel || 'Base Form Only')}</strong><span>transform path</span></div>
             <div class="stat-card"><strong>${formatNumber(selected.moveCount)}</strong><span>moves in learnset</span></div>
             <div class="stat-card"><strong>${escapeHtml(selected.evSummary || 'No EV build')}</strong><span>recommended EV build</span></div>
             <div class="stat-card"><strong>${escapeHtml(selected.ivSummary || '31 all')}</strong><span>recommended IV build</span></div>
@@ -2522,6 +2566,10 @@ function renderBuildDexPage(state) {
             <div class="badge-row compact-row">${altItems}</div>
             <p class="muted gap-top"><strong>Evolution path:</strong></p>
             <div class="badge-row compact-row">${evolutionBadges}</div>
+            <p class="muted gap-top"><strong>Transformation path:</strong></p>
+            <div class="badge-row compact-row">${transformationBadges}</div>
+            <p class="muted gap-top">${escapeHtml(selected.transformation?.summary || 'This build stays in base form.')}</p>
+            ${selected.acquisitionNote ? `<p class="muted gap-top">${escapeHtml(selected.acquisitionNote)}</p>` : ''}
           </article>
           <article class="panelish build-copy-card">
             <h3>Type Profile</h3>
@@ -2602,6 +2650,7 @@ function buildBattleChat(run, encounter) {
   const activePlayer = run.party[encounter.playerIndex];
   const activeEnemy = encounter.enemyParty[encounter.enemyIndex];
   const heldItem = heldItemInfo(activePlayer);
+  const transformModes = transformationModesForSpecies(CONTENT.speciesMap.get(activePlayer.speciesId));
   const lines = [];
   if (encounter.weather?.type && encounter.weather.type !== 'clear') {
     lines.push(`${CONTENT.weatherLabels[encounter.weather.type]} is active. ${encounter.weather.type === 'rain' ? 'Water moves are stronger.' : 'Fire moves are stronger.'}`);
@@ -2615,16 +2664,16 @@ function buildBattleChat(run, encounter) {
   if (heldItem?.holdEffect === 'z-crystal' && !activePlayer.zMoveUsed) {
     lines.push('Tech: Your Z-Move is online for a matching attack.');
   }
-  if (heldItem?.holdEffect === 'mega-stone' && !activePlayer.megaEvolved) {
+  if (heldItem?.holdEffect === 'mega-stone' && !activePlayer.megaEvolved && transformModes.includes('mega')) {
     lines.push('Coach: Mega Evolution is ready if you want a tempo swing.');
   }
-  if (heldItem?.holdEffect === 'ultra-core' && !activePlayer.ultraBurst) {
+  if (heldItem?.holdEffect === 'ultra-core' && !activePlayer.ultraBurst && transformModes.includes('ultra')) {
     lines.push('Analyst: Ultra Burst is available for a fully evolved power spike.');
   }
-  if (heldItem?.holdEffect === 'dynamax-band' && !activePlayer.dynamaxed) {
+  if (heldItem?.holdEffect === 'dynamax-band' && !activePlayer.dynamaxed && transformModes.includes('dynamax')) {
     lines.push('Command: Dynamax is available if you need a bulk and pressure spike.');
   }
-  if (heldItem?.holdEffect === 'variant-core' && !activePlayer.variantShift) {
+  if (heldItem?.holdEffect === 'variant-core' && !activePlayer.variantShift && transformModes.includes('variant')) {
     lines.push('Research: Variant Form can swap you into a different move kit on demand.');
   }
   if (activeEnemy.currentHp <= activeEnemy.stats.hp * 0.3 && encounter.canCapture) {
@@ -2823,8 +2872,8 @@ function renderBattleFaceoffPanel(monster, options = {}) {
         <div class="battle-active-copy">
           <div class="badge-row compact-row">${identityBadges}</div>
           <div class="health hp-bar battle-active-health"><span style="width:${hpPercent}%"></span></div>
-          <p class="battle-active-note">${escapeHtml(ability?.name || 'Battle Aura')} ï¿½ ${escapeHtml(heldItem?.name || 'No held item')}</p>
-          <p class="battle-active-note">${escapeHtml(aura?.name || 'Standard aura')} ï¿½ ${escapeHtml(nature?.name || 'Neutral nature')}</p>
+          <p class="battle-active-note">${escapeHtml(ability?.name || 'Battle Aura')} � ${escapeHtml(heldItem?.name || 'No held item')}</p>
+          <p class="battle-active-note">${escapeHtml(aura?.name || 'Standard aura')} � ${escapeHtml(nature?.name || 'Neutral nature')}</p>
           <div class="battle-active-stats">
             <span>Atk ${formatNumber(monster.stats.atk)}</span>
             <span>Def ${formatNumber(monster.stats.def)}</span>
@@ -2902,7 +2951,7 @@ function renderBattleRosterCard(monster, options = {}) {
       <div class="battle-roster-icon palette-${escapeHtml(paletteForType(species.types?.[0]))}">${escapeHtml((monster.nickname || monster.name).slice(0, 2).toUpperCase())}</div>
       <div class="battle-roster-copy">
         <strong>${escapeHtml(battleMonsterName(monster))}</strong>
-        <span>Lv ${formatNumber(monster.level)} ï¿½ HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
+        <span>Lv ${formatNumber(monster.level)} � HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
         <div class="health hp-bar battle-roster-health"><span style="width:${hpPercent}%"></span></div>
       </div>
       <span class="battle-roster-state">${escapeHtml(stateLabel)}</span>
@@ -2926,7 +2975,7 @@ function renderBattleSwitchCard(monster, index, activeIndex) {
         <div class="battle-roster-icon palette-${escapeHtml(paletteForType(species.types?.[0]))}">${escapeHtml((monster.nickname || monster.name).slice(0, 2).toUpperCase())}</div>
         <div class="battle-roster-copy">
           <strong>${escapeHtml(monsterLabel(monster))}</strong>
-          <span>Lv ${formatNumber(monster.level)} ï¿½ HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
+          <span>Lv ${formatNumber(monster.level)} � HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
         </div>
       </div>
       <div class="health hp-bar battle-roster-health"><span style="width:${hpPercent}%"></span></div>
@@ -2941,11 +2990,12 @@ function renderBattleView(run) {
   const activeEnemy = encounter.enemyParty[encounter.enemyIndex];
   const activeHeldItem = heldItemInfo(activePlayer);
   const species = CONTENT.speciesMap.get(activePlayer.speciesId);
+  const transformModes = transformationModesForSpecies(species);
   const specialLocked = activePlayer.megaEvolved || activePlayer.ultraBurst || activePlayer.dynamaxed || activePlayer.variantShift;
-  const canMega = activeHeldItem?.holdEffect === 'mega-stone' && !specialLocked && species?.stage >= 2;
-  const canUltra = activeHeldItem?.holdEffect === 'ultra-core' && !specialLocked && species?.stage >= 3;
-  const canDynamax = activeHeldItem?.holdEffect === 'dynamax-band' && !specialLocked;
-  const canVariant = activeHeldItem?.holdEffect === 'variant-core' && !specialLocked;
+  const canMega = activeHeldItem?.holdEffect === 'mega-stone' && !specialLocked && species?.stage >= 2 && transformModes.includes('mega');
+  const canUltra = activeHeldItem?.holdEffect === 'ultra-core' && !specialLocked && species?.stage >= 3 && transformModes.includes('ultra');
+  const canDynamax = activeHeldItem?.holdEffect === 'dynamax-band' && !specialLocked && transformModes.includes('dynamax');
+  const canVariant = activeHeldItem?.holdEffect === 'variant-core' && !specialLocked && transformModes.includes('variant');
   const latestMessage = encounter.latestMessage || encounter.log[encounter.log.length - 1] || 'Awaiting the next command...';
   const playerMoveTiles = activePlayer.moves.length
     ? activePlayer.moves.map((moveState, index) => {
@@ -3006,7 +3056,7 @@ function renderBattleView(run) {
             ${badge(encounter.phase || 'day', encounter.phase === 'night' ? 'ghost' : 'warning')}
             ${badge(momentumLabel, momentumTone)}
           </div>
-          <p class="muted">Biome ${escapeHtml(encounter.biome)} ï¿½ ability ${escapeHtml(abilityInfo(activePlayer)?.name || 'Battle Aura')} ï¿½ held item ${escapeHtml(activeHeldItem?.name || 'none')} ï¿½ ${escapeHtml(encounter.ambientEvent?.label || 'Quiet route')}</p>
+          <p class="muted">Biome ${escapeHtml(encounter.biome)} � ability ${escapeHtml(abilityInfo(activePlayer)?.name || 'Battle Aura')} � held item ${escapeHtml(activeHeldItem?.name || 'none')} � ${escapeHtml(encounter.ambientEvent?.label || 'Quiet route')}</p>
         </div>
         <form method="post" action="/play/abandon" class="inline-form">
           <button class="button danger" type="submit">Abandon run</button>
@@ -4373,7 +4423,7 @@ function renderEmojiPicker(targetInputId, pickerSlug, categories = []) {
   }
   const tabs = categories.map((category, index) => `
     <button class="tab-button ${index === 0 ? 'is-active' : ''}" type="button" data-tab-target="${escapeHtml(`${pickerSlug}-${category.slug}`)}">
-      <span>${escapeHtml(category.icon || 'ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢')}</span>
+      <span>${escapeHtml(category.icon || 'ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢')}</span>
       <span>${escapeHtml(category.name)}</span>
     </button>
   `).join('');
@@ -5179,6 +5229,7 @@ function renderNews(state) {
         </div>
         <div class="button-row">
           <a class="button ghost" href="/social">Open Social</a>
+          <a class="button ghost" href="/events">Open Events</a>
           <a class="button accent" href="/minigames">Play Mini Games</a>
         </div>
       </div>
@@ -5189,6 +5240,125 @@ function renderNews(state) {
       <section class="market-section">
         <h2>Upcoming</h2>
         <div class="grid-three news-grid">${upcomingCards}</div>
+      </section>
+    </section>
+  `;
+}
+
+function renderEventsPage(state) {
+  const liveCards = state.headlines.slice(0, 4).map((entry) => `
+    <article class="panelish news-card">
+      <div class="card-top">
+        <h3>${escapeHtml(entry.title)}</h3>
+        ${badge(entry.kind, entry.kind === 'Live' ? 'success' : entry.kind === 'Market' ? 'warning' : 'default')}
+      </div>
+      <p class="muted">${escapeHtml(entry.summary)}</p>
+      <small class="muted">${escapeHtml(entry.publishedAt || 'Now')}</small>
+    </article>
+  `).join('');
+  const bannerCards = state.banners.map((entry) => `
+    <article class="panelish news-card ${entry.active ? 'upcoming-card' : ''}">
+      <div class="card-top">
+        <div>
+          <h3>${escapeHtml(entry.banner)}</h3>
+          <p class="muted">${escapeHtml(entry.series)} &middot; ${formatNumber(entry.species.length)} units</p>
+        </div>
+        ${badge(entry.active ? 'Active' : 'Standby', entry.active ? 'success' : 'default')}
+      </div>
+      <div class="badge-row compact-row">
+        ${entry.typeSet.slice(0, 4).map((type) => badge(titleLabel(type), type)).join(' ')}
+        ${entry.mythicCount ? badge(`${formatNumber(entry.mythicCount)} mythic`, 'warning') : ''}
+        ${badge(`${formatNumber(entry.transformReady)} transform-ready`, 'default')}
+      </div>
+      <p class="muted gap-top">Catch rate range ${formatNumber(Math.round(entry.minCatchRate * 1000) / 10)}% to ${formatNumber(Math.round(entry.maxCatchRate * 1000) / 10)}%. Rotation refresh in about ${formatNumber(entry.rotationMinutesRemaining || 60)} minutes.</p>
+    </article>
+  `).join('');
+  const unitCards = state.featuredUnits.map((entry) => {
+    const species = entry.species;
+    return `
+      <article class="monster-card panelish dex-card">
+        <div class="card-top">
+          <div>
+            <h3>${escapeHtml(species.name)}</h3>
+            <p class="muted">${escapeHtml(entry.series)} &middot; ${escapeHtml(entry.banner)}</p>
+          </div>
+          ${badge(species.rarity, species.rarity === 'mythic' || species.rarity === 'legendary' ? 'warning' : species.rarity === 'epic' ? 'psychic' : 'default')}
+        </div>
+        ${renderMonsterPortrait(species, { caption: `Stage ${formatNumber(species.stage)} - ${formatNumber(species.total || 0)} total` })}
+        <div class="badge-row compact-row">${species.types.map((type) => badge(titleLabel(type), type)).join(' ')}</div>
+        <div class="badge-row compact-row gap-top">${renderTransformationBadges(entry.transformationModes || [])}</div>
+        <p class="muted gap-top">RNG catch target: ${escapeHtml(String(Number(entry.catchRatePercent || 0).toFixed(1)).replace(/\.0$/, ''))}% catch rate.</p>
+        <p class="muted">${escapeHtml(species.acquisitionNote || 'Limited rotation unit.')}</p>
+        <div class="button-row gap-top">
+          <a class="button ghost" href="/builds/${escapeHtml(species.slug)}">Open Build</a>
+        </div>
+      </article>
+    `;
+  }).join('');
+  const saveBadges = (state.saveSummary?.protectedScopes || []).map((entry) => badge(entry, 'default')).join(' ');
+  return `
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Live Event Relay</p>
+          <h1>Events & Rotations</h1>
+          <p class="muted">Track limited anime banners, RNG catch windows, battle transformations, and account-save coverage from one page.</p>
+        </div>
+        <div class="button-row">
+          <a class="button ghost" href="/news">Open News</a>
+          <a class="button accent" href="/builds">Open Build Dex</a>
+        </div>
+      </div>
+      <section class="grid-two settings-grid gap-top">
+        <article class="panelish settings-card">
+          <p class="eyebrow">Current Rotation</p>
+          <h2>${escapeHtml(state.world.event.label)}</h2>
+          <p class="muted">${escapeHtml(state.world.phaseLabel)} in ${escapeHtml(state.world.activeRegion.name)}. Daily boss focus: ${escapeHtml(state.dailyBoss?.name || 'Astravault Omega')}.</p>
+          <div class="badge-row compact-row gap-top">
+            ${badge(`${formatNumber(state.featuredBanners.length)} active banners`, 'success')}
+            ${badge(`${formatNumber(state.featuredUnits.length)} featured units`, 'warning')}
+            ${badge(`${formatNumber(state.world.marketRotation.minutesRemaining)}m market reset`, 'default')}
+          </div>
+        </article>
+        <article class="panelish settings-card">
+          <p class="eyebrow">Save & Recovery</p>
+          <h2>Persistent Account Progress</h2>
+          <p class="muted">Accounts, runs, trainer level, storage, inventory, and cash are saved automatically. Device restore is ${state.saveSummary?.deviceBackupReady ? 'ready on this browser' : 'not ready yet on this browser'}.</p>
+          <div class="badge-row compact-row gap-top">
+            ${badge(`Lv ${formatNumber(state.saveSummary?.trainerLevel || 1)}`, 'success')}
+            ${badge(`${formatNumber(state.saveSummary?.caughtCount || 0)} caught`, 'default')}
+            ${badge(`${formatNumber(state.saveSummary?.visibleCollectionCount || 0)} stored`, 'warning')}
+          </div>
+          <div class="badge-row compact-row gap-top">${saveBadges}</div>
+          <p class="muted gap-top">Last synced snapshot: ${escapeHtml(String(state.saveSummary?.lastSyncedAt || 'Now'))}</p>
+        </article>
+      </section>
+      <section class="market-section">
+        <div class="section-head">
+          <div>
+            <h2>Live Feed</h2>
+            <p class="muted">Broadcast cards for the current world event, boss watch, and market rotation.</p>
+          </div>
+        </div>
+        <div class="grid-three news-grid">${liveCards}</div>
+      </section>
+      <section class="market-section">
+        <div class="section-head">
+          <div>
+            <h2>Limited Banner Rotations</h2>
+            <p class="muted">Every limited banner is grouped here so players can chase specific anime lines instead of guessing where they live.</p>
+          </div>
+        </div>
+        <div class="grid-three news-grid">${bannerCards}</div>
+      </section>
+      <section class="market-section">
+        <div class="section-head">
+          <div>
+            <h2>Featured Units</h2>
+            <p class="muted">These are the hottest limited pulls right now, with RNG catch info and transformation access called out directly.</p>
+          </div>
+        </div>
+        <div class="monster-grid">${unitCards}</div>
       </section>
     </section>
   `;
@@ -6133,6 +6303,14 @@ export async function handleRequest(request, response) {
       return;
     }
 
+    if (request.method === 'GET' && pathname === '/events') {
+      if (!requireAuth(user, response)) {
+        return;
+      }
+      renderPage(response, { title: 'Events', user, flash, body: renderEventsPage(getEventsState(user.id)), wide: true });
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/admin') {
       if (!requireAdmin(user, response)) {
         return;
@@ -6193,6 +6371,21 @@ if (isDirectRun) {
     console.log(`Moemon Arena listening on ${config.appOrigin}`);
   });
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

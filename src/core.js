@@ -1,4 +1,4 @@
-﻿import fs from 'node:fs';
+import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import tls from 'node:tls';
@@ -1686,6 +1686,43 @@ const LIMITED_EVENT_MOVE_DEFINITIONS = [
   ['sode-no-shirayuki', 'Sode no Shirayuki', 'ice', 'special', 92, 95, 10, 'special', 3, 'Cold white spirit power blooms into a cutting wave.'],
   ['white-haze-prison', 'White Haze Prison', 'ice', 'special', 84, 96, 10, 'debuff-atk', 3, 'A binding frost suppresses the foe aggression.'],
   ['hakka-no-togame', 'Hakka no Togame', 'ice', 'special', 138, 82, 5, 'special', 5, 'Absolute zero spreads from a single flawless release.'],
+  ['rika-manifest', 'Rika Manifest', 'ghost', 'status', 0, 100, 10, 'focus', 4, 'Rika answers the call and sharpens every follow-up command.'],
+  ['cursed-speech', 'Cursed Speech', 'ghost', 'special', 84, 95, 10, 'paralyze', 3, 'A spoken curse locks the foe in place.'],
+  ['copy-technique', 'Copy Technique', 'psychic', 'status', 0, 100, 12, 'buff-spe', 3, 'Borrowed technique flow lets the user adapt faster.'],
+  ['love-beam', 'Love Beam', 'fairy', 'special', 134, 84, 6, 'special', 5, 'A bond-fueled blast overwhelms the target with raw output.'],
+  ['granite-blast', 'Granite Blast', 'electric', 'special', 142, 82, 5, 'recoil', 5, 'Immense cursed output erupts like a cannon shot.'],
+  ['output-overdrive', 'Output Overdrive', 'electric', 'status', 0, 100, 8, 'buff-spa', 4, 'The user spikes its cursed output to terrifying levels.'],
+  ['cannon-breaker', 'Cannon Breaker', 'fighting', 'physical', 98, 92, 10, 'debuff-def', 4, 'A close-range rush opens the target for the next blast.'],
+  ['shadow-clone-barrage', 'Shadow Clone Barrage', 'fighting', 'physical', 88, 96, 12, 'damage', 3, 'A swarm of clones crashes into the target from every angle.'],
+  ['rasengan', 'Rasengan', 'fighting', 'special', 94, 95, 10, 'special', 3, 'Compressed chakra drills straight through the target.'],
+  ['rasenshuriken', 'Rasenshuriken', 'flying', 'special', 128, 84, 6, 'debuff-atk', 5, 'Wind chakra tears through the foe and blunts retaliation.'],
+  ['kurama-cloak', 'Kurama Cloak', 'fairy', 'status', 0, 100, 10, 'focus', 4, 'Nine-tailed chakra floods the user with speed and power.'],
+  ['truth-seeking-orb', 'Truth-Seeking Orb', 'psychic', 'special', 146, 80, 5, 'special', 5, 'A flawless chakra sphere deletes whatever it touches.'],
+  ['chidori', 'Chidori', 'electric', 'physical', 96, 95, 10, 'paralyze', 3, 'Lightning chakra pierces the target and can stop them cold.'],
+  ['amaterasu', 'Amaterasu', 'fire', 'special', 104, 92, 8, 'burn', 4, 'Black flames cling to the target and keep burning.'],
+  ['susanoo-guard', 'Susanoo Guard', 'steel', 'status', 0, 100, 10, 'buff-def', 4, 'A spectral warrior hardens the user against incoming damage.'],
+  ['kagutsuchi', 'Kagutsuchi', 'dark', 'special', 118, 88, 8, 'debuff-def', 4, 'Black fire is reshaped into a sharper killing edge.'],
+  ['indras-arrow', 'Indra\'s Arrow', 'electric', 'special', 150, 78, 5, 'recoil', 5, 'A supreme lightning arrow is loosed in one decisive arc.'],
+  ['chakra-punch', 'Chakra Punch', 'fighting', 'physical', 92, 95, 10, 'debuff-def', 3, 'Perfect chakra control turns one punch into a crater.'],
+  ['medical-ninjutsu', 'Medical Ninjutsu', 'fairy', 'status', 0, 100, 14, 'heal', 2, 'Fine control restores the user and stabilizes the team core.'],
+  ['hundred-healings', 'Hundred Healings', 'fairy', 'status', 0, 100, 8, 'cleanse', 5, 'Stored chakra erupts, healing wounds and clearing status.'],
+  ['seismic-lotus', 'Seismic Lotus', 'ground', 'physical', 122, 86, 7, 'recoil', 4, 'A devastating slam trades HP for a crushing finish.'],
+  ['water-wheel', 'Water Wheel', 'water', 'physical', 86, 98, 12, 'damage', 3, 'A flowing blade arc cuts through the target in one rotation.'],
+  ['total-concentration', 'Total Concentration', 'water', 'status', 0, 100, 12, 'buff-spe', 3, 'Breathing rhythm sharpens the user movements and timing.'],
+  ['hinokami-kagura', 'Hinokami Kagura', 'fire', 'physical', 118, 88, 8, 'burn', 4, 'Sunlit swordplay scorches the foe on contact.'],
+  ['sun-halo-dragon', 'Sun Halo Dragon', 'dragon', 'physical', 142, 82, 5, 'recoil', 5, 'A blazing dragon strike consumes HP for a brutal finish.'],
+  ['demon-blood-art', 'Demon Blood Art', 'fire', 'special', 98, 94, 10, 'burn', 3, 'Explosive blood flames lash out around the user.'],
+  ['protective-flame', 'Protective Flame', 'fairy', 'status', 0, 100, 12, 'cleanse', 3, 'A gentle demonic flame seals wounds and clears afflictions.'],
+  ['berserk-kick', 'Berserk Kick', 'dark', 'physical', 114, 90, 8, 'recoil', 4, 'Wild force erupts in a savage close-range kick.'],
+  ['regeneration-surge', 'Regeneration Surge', 'poison', 'status', 0, 100, 10, 'heal', 3, 'The user forces a rapid regeneration spike mid-battle.'],
+  ['titan-shift', 'Titan Shift', 'ground', 'status', 0, 100, 8, 'buff-atk', 4, 'The user shifts into titan form and surges with raw strength.'],
+  ['hardening-guard', 'Hardening Guard', 'steel', 'status', 0, 100, 10, 'buff-def', 4, 'Titan hardening reinforces the user body like armor.'],
+  ['war-hammer-rush', 'War Hammer Rush', 'ground', 'physical', 126, 86, 7, 'recoil', 4, 'A massive titan charge batters everything in the lane.'],
+  ['founding-roar', 'Founding Roar', 'dragon', 'special', 96, 92, 8, 'paralyze', 4, 'A commanding roar freezes enemy movement across the field.'],
+  ['omni-directional-slash', 'Omni-Directional Slash', 'steel', 'physical', 92, 97, 12, 'damage', 3, 'The user cuts from a blind angle before the target can react.'],
+  ['thunder-spear', 'Thunder Spear', 'electric', 'physical', 124, 88, 7, 'recoil', 4, 'An anti-titan lance detonates on impact.'],
+  ['ackerman-focus', 'Ackerman Focus', 'fighting', 'status', 0, 100, 10, 'buff-spe', 4, 'Instinct and bloodline talent push the user past human limits.'],
+  ['clean-cut', 'Flying Clean Cut', 'flying', 'physical', 102, 94, 10, 'debuff-def', 4, 'A relentless pass strips the target defense away.'],
 ];
 
 function buildLimitedEventMoves(startId = 1) {
@@ -2031,6 +2068,131 @@ const LIMITED_EVENT_SPECIES_LINES = [
       { slug: 'bankai-rukia', name: 'Bankai Rukia', stage: 3, types: ['ice', 'fairy'], baseStats: { hp: 98, atk: 82, def: 106, spa: 138, spd: 120, spe: 110 }, abilityPool: ['filter', 'magic-guard'], hiddenAbilitySlug: 'prism-surge', rarity: 'legendary' },
     ],
   },
+  {
+    series: 'Jujutsu Kaisen',
+    banner: 'Queen of Curses',
+    biome: 'Shadow Lab',
+    moveTypes: ['ghost', 'fairy', 'psychic', 'steel'],
+    signatureMoves: ['cursed-speech', 'rika-manifest', 'copy-technique', 'love-beam'],
+    transformationModes: ['mega', 'variant'],
+    acquisitionNote: 'Limited RNG banner focused on high-end support casters and special bruisers.',
+    stages: [
+      { slug: 'yuta-okkotsu', name: 'Yuta Okkotsu', stage: 1, types: ['ghost', 'fairy'], baseStats: { hp: 80, atk: 72, def: 76, spa: 96, spd: 88, spe: 80 }, abilityPool: ['natural-cure', 'serene-grace'], hiddenAbilitySlug: 'magic-guard', rarity: 'rare', evolveLevel: 40, guideHint: 'Balanced support attacker that can paralyze, pivot, and still threaten KOs.' },
+      { slug: 'special-grade-yuta', name: 'Special Grade Yuta', stage: 2, types: ['ghost', 'fairy'], baseStats: { hp: 92, atk: 84, def: 88, spa: 122, spd: 104, spe: 94 }, abilityPool: ['serene-grace', 'magic-guard'], hiddenAbilitySlug: 'natural-cure', rarity: 'epic', evolveLevel: 74, guideHint: 'Bulky support breaker that spikes once Rika is active.' },
+      { slug: 'ringbound-yuta', name: 'Ringbound Yuta', stage: 3, types: ['ghost', 'psychic'], baseStats: { hp: 106, atk: 96, def: 100, spa: 142, spd: 118, spe: 108 }, abilityPool: ['magic-guard', 'filter'], hiddenAbilitySlug: 'prism-surge', rarity: 'legendary', guideHint: 'Special bruiser that can flex into control, burst, or setup-heavy variants.' },
+    ],
+  },
+  {
+    series: 'Jujutsu Kaisen',
+    banner: 'Sendai Colony',
+    biome: 'Iron Furnace',
+    moveTypes: ['electric', 'fighting', 'rock'],
+    signatureMoves: ['granite-blast', 'output-overdrive', 'cannon-breaker'],
+    transformationModes: [],
+    transformationNote: 'Ryu Ishigori is locked out of battle transformations because his base output is already tuned as a complete limited unit.',
+    acquisitionNote: 'Single-form limited artillery unit with brutal output and a very low catch rate.',
+    stages: [
+      { slug: 'ryu-ishigori', name: 'Ryu Ishigori', stage: 3, types: ['electric', 'fighting'], baseStats: { hp: 116, atk: 108, def: 102, spa: 146, spd: 98, spe: 82 }, abilityPool: ['filter', 'adaptability'], hiddenAbilitySlug: 'battle-aura', rarity: 'mythic', guideHint: 'Artillery tank with no transformation line. Take trades and force damage with raw output.' },
+    ],
+  },
+  {
+    series: 'Naruto',
+    banner: 'Leaf Storm',
+    biome: 'Sky Forge',
+    moveTypes: ['fighting', 'psychic', 'flying', 'fairy'],
+    signatureMoves: ['shadow-clone-barrage', 'rasengan', 'rasenshuriken', 'kurama-cloak', 'truth-seeking-orb'],
+    acquisitionNote: 'A popular limited shonen banner with mixed sweepers and strong transformation scaling.',
+    stages: [
+      { slug: 'naruto-uzumaki', name: 'Naruto Uzumaki', stage: 1, types: ['fighting'], baseStats: { hp: 84, atk: 80, def: 72, spa: 78, spd: 74, spe: 86 }, abilityPool: ['guts', 'battle-aura'], hiddenAbilitySlug: 'reckless', rarity: 'rare', evolveLevel: 34, guideHint: 'Fast mixed attacker that snowballs with tempo and setup.' },
+      { slug: 'sage-mode-naruto', name: 'Sage Mode Naruto', stage: 2, types: ['fighting', 'psychic'], baseStats: { hp: 96, atk: 96, def: 84, spa: 94, spd: 88, spe: 100 }, abilityPool: ['battle-aura', 'adaptability'], hiddenAbilitySlug: 'prism-surge', rarity: 'epic', evolveLevel: 68, guideHint: 'Mixed sweeper with enough bulk to set up and start trading.' },
+      { slug: 'kurama-chakra-naruto', name: 'Kurama Chakra Naruto', stage: 3, types: ['fighting', 'fairy'], baseStats: { hp: 108, atk: 116, def: 96, spa: 110, spd: 100, spe: 116 }, abilityPool: ['adaptability', 'guts'], hiddenAbilitySlug: 'prism-surge', rarity: 'legendary', evolveLevel: 86, guideHint: 'High-tempo cleaner with excellent transform scaling.' },
+      { slug: 'six-paths-naruto', name: 'Six Paths Naruto', stage: 4, types: ['psychic', 'fairy'], baseStats: { hp: 120, atk: 126, def: 108, spa: 132, spd: 114, spe: 128 }, abilityPool: ['adaptability', 'magic-guard'], hiddenAbilitySlug: 'prism-surge', rarity: 'mythic', guideHint: 'Premium mixed carry with elite speed control and late-game burst.' },
+    ],
+  },
+  {
+    series: 'Naruto',
+    banner: 'Uchiha Eclipse',
+    biome: 'Shadow Lab',
+    moveTypes: ['electric', 'fire', 'dark', 'steel', 'psychic'],
+    signatureMoves: ['chidori', 'amaterasu', 'susanoo-guard', 'kagutsuchi', 'indras-arrow'],
+    acquisitionNote: 'Limited fast-breaker banner with premium special pressure and sharper transformation spikes.',
+    stages: [
+      { slug: 'sasuke-uchiha', name: 'Sasuke Uchiha', stage: 1, types: ['dark', 'electric'], baseStats: { hp: 76, atk: 88, def: 70, spa: 86, spd: 72, spe: 92 }, abilityPool: ['pressure', 'battle-aura'], hiddenAbilitySlug: 'adaptability', rarity: 'rare', evolveLevel: 36, guideHint: 'Fast breaker that can lean physical early before turning special later.' },
+      { slug: 'mangekyo-sasuke', name: 'Mangekyo Sasuke', stage: 2, types: ['dark', 'fire'], baseStats: { hp: 88, atk: 102, def: 80, spa: 104, spd: 82, spe: 108 }, abilityPool: ['pressure', 'adaptability'], hiddenAbilitySlug: 'magic-guard', rarity: 'epic', evolveLevel: 72, guideHint: 'Fast special breaker with burn pressure and defensive setup options.' },
+      { slug: 'eternal-mangekyo-sasuke', name: 'Eternal Mangekyo Sasuke', stage: 3, types: ['dark', 'steel'], baseStats: { hp: 100, atk: 116, def: 92, spa: 122, spd: 94, spe: 120 }, abilityPool: ['adaptability', 'pressure'], hiddenAbilitySlug: 'magic-guard', rarity: 'legendary', evolveLevel: 88, guideHint: 'High-tempo breaker that can pivot between defensive setup and huge burst turns.' },
+      { slug: 'rinnegan-sasuke', name: 'Rinnegan Sasuke', stage: 4, types: ['dark', 'psychic'], baseStats: { hp: 112, atk: 126, def: 100, spa: 138, spd: 104, spe: 130 }, abilityPool: ['adaptability', 'magic-guard'], hiddenAbilitySlug: 'prism-surge', rarity: 'mythic', guideHint: 'Elite fast breaker with top-end transform and recoil-finisher lines.' },
+    ],
+  },
+  {
+    series: 'Naruto',
+    banner: 'Byakugo Surge',
+    biome: 'Moon Orchard',
+    moveTypes: ['fighting', 'fairy', 'ground'],
+    signatureMoves: ['chakra-punch', 'medical-ninjutsu', 'hundred-healings', 'seismic-lotus'],
+    transformationModes: ['mega', 'dynamax'],
+    acquisitionNote: 'Support-heavy limited banner built around bruisers, sustain, and healer-style builds.',
+    stages: [
+      { slug: 'sakura-haruno', name: 'Sakura Haruno', stage: 1, types: ['fighting', 'fairy'], baseStats: { hp: 82, atk: 78, def: 80, spa: 64, spd: 82, spe: 70 }, abilityPool: ['natural-cure', 'filter'], hiddenAbilitySlug: 'regenerator', rarity: 'rare', evolveLevel: 36, guideHint: 'Early support bruiser that trades cleanly and patches status.' },
+      { slug: 'hundred-healings-sakura', name: 'Hundred Healings Sakura', stage: 2, types: ['fighting', 'fairy'], baseStats: { hp: 96, atk: 96, def: 98, spa: 74, spd: 102, spe: 82 }, abilityPool: ['natural-cure', 'regenerator'], hiddenAbilitySlug: 'filter', rarity: 'epic', evolveLevel: 72, guideHint: 'Healer tank that can still punish overextensions with huge punches.' },
+      { slug: 'byakugo-sakura', name: 'Byakugo Sakura', stage: 3, types: ['fighting', 'ground'], baseStats: { hp: 114, atk: 124, def: 112, spa: 82, spd: 116, spe: 92 }, abilityPool: ['regenerator', 'filter'], hiddenAbilitySlug: 'natural-cure', rarity: 'legendary', guideHint: 'Tanky healer-bruiser with real recovery loops and high physical pressure.' },
+    ],
+  },
+  {
+    series: 'Demon Slayer',
+    banner: 'Sun Breathing Corps',
+    biome: 'Moon Orchard',
+    moveTypes: ['water', 'fire', 'fighting', 'dragon'],
+    signatureMoves: ['water-wheel', 'total-concentration', 'hinokami-kagura', 'sun-halo-dragon'],
+    transformationModes: ['mega', 'variant'],
+    acquisitionNote: 'Popular swordfighter banner with adaptive physical builds and tempo-focused transform options.',
+    stages: [
+      { slug: 'tanjiro-kamado', name: 'Tanjiro Kamado', stage: 1, types: ['water', 'fighting'], baseStats: { hp: 82, atk: 86, def: 74, spa: 62, spd: 72, spe: 84 }, abilityPool: ['battle-aura', 'guts'], hiddenAbilitySlug: 'reckless', rarity: 'rare', evolveLevel: 34, guideHint: 'Clean physical sweeper that uses speed control to keep pressure on.' },
+      { slug: 'hinokami-tanjiro', name: 'Hinokami Tanjiro', stage: 2, types: ['fire', 'fighting'], baseStats: { hp: 94, atk: 108, def: 82, spa: 74, spd: 82, spe: 100 }, abilityPool: ['battle-aura', 'adaptability'], hiddenAbilitySlug: 'reckless', rarity: 'epic', evolveLevel: 70, guideHint: 'Aggressive breaker with burn pressure and recoil finishers.' },
+      { slug: 'sun-breathing-tanjiro', name: 'Sun Breathing Tanjiro', stage: 3, types: ['fire', 'dragon'], baseStats: { hp: 108, atk: 126, def: 96, spa: 88, spd: 94, spe: 116 }, abilityPool: ['adaptability', 'reckless'], hiddenAbilitySlug: 'prism-surge', rarity: 'legendary', guideHint: 'Fast physical closer that loves transform-assisted finishing lines.' },
+    ],
+  },
+  {
+    series: 'Demon Slayer',
+    banner: 'Demon Moon Awakening',
+    biome: 'Shadow Lab',
+    moveTypes: ['dark', 'fire', 'fairy', 'poison'],
+    signatureMoves: ['demon-blood-art', 'protective-flame', 'berserk-kick', 'regeneration-surge'],
+    transformationModes: ['dynamax', 'variant'],
+    acquisitionNote: 'Limited demon banner focused on bruiser-healers, cleanse loops, and regen-heavy play.',
+    stages: [
+      { slug: 'nezuko-kamado', name: 'Nezuko Kamado', stage: 1, types: ['dark', 'fire'], baseStats: { hp: 86, atk: 82, def: 76, spa: 68, spd: 84, spe: 78 }, abilityPool: ['natural-cure', 'filter'], hiddenAbilitySlug: 'regenerator', rarity: 'rare', evolveLevel: 38, guideHint: 'Bulky utility attacker that already hints at a healer role.' },
+      { slug: 'awakened-nezuko', name: 'Awakened Nezuko', stage: 2, types: ['dark', 'fire'], baseStats: { hp: 102, atk: 106, def: 90, spa: 82, spd: 100, spe: 94 }, abilityPool: ['regenerator', 'filter'], hiddenAbilitySlug: 'natural-cure', rarity: 'epic', evolveLevel: 74, guideHint: 'Bruiser healer with cleanse access and high sustain value.' },
+      { slug: 'conqueror-nezuko', name: 'Conqueror Nezuko', stage: 3, types: ['dark', 'fairy'], baseStats: { hp: 118, atk: 128, def: 104, spa: 94, spd: 116, spe: 108 }, abilityPool: ['regenerator', 'magic-guard'], hiddenAbilitySlug: 'filter', rarity: 'legendary', guideHint: 'Healer-bruiser that can reset status and still close fights with burst kicks.' },
+    ],
+  },
+  {
+    series: 'Attack on Titan',
+    banner: 'Titan Rebellion',
+    biome: 'Iron Furnace',
+    moveTypes: ['ground', 'steel', 'dragon', 'fighting'],
+    signatureMoves: ['titan-shift', 'hardening-guard', 'war-hammer-rush', 'founding-roar'],
+    transformationModes: ['mega', 'dynamax'],
+    acquisitionNote: 'Limited titan banner built around tanks, self-buffs, and oversized finisher turns.',
+    stages: [
+      { slug: 'eren-yeager', name: 'Eren Yeager', stage: 1, types: ['fighting'], baseStats: { hp: 88, atk: 84, def: 74, spa: 54, spd: 68, spe: 76 }, abilityPool: ['guts', 'battle-aura'], hiddenAbilitySlug: 'reckless', rarity: 'rare', evolveLevel: 32, guideHint: 'Bruiser that later becomes a transformation-friendly tank breaker.' },
+      { slug: 'attack-titan-eren', name: 'Attack Titan Eren', stage: 2, types: ['ground', 'fighting'], baseStats: { hp: 108, atk: 118, def: 96, spa: 70, spd: 88, spe: 92 }, abilityPool: ['guts', 'intimidate'], hiddenAbilitySlug: 'reckless', rarity: 'epic', evolveLevel: 70, guideHint: 'Bruiser tank that buffs up and starts winning physical trades.' },
+      { slug: 'founding-eren', name: 'Founding Eren', stage: 3, types: ['ground', 'dragon'], baseStats: { hp: 128, atk: 136, def: 118, spa: 88, spd: 108, spe: 96 }, abilityPool: ['intimidate', 'filter'], hiddenAbilitySlug: 'prism-surge', rarity: 'mythic', guideHint: 'Tank breaker with huge HP, control pressure, and premium Dynamax value.' },
+    ],
+  },
+  {
+    series: 'Attack on Titan',
+    banner: 'Scout Vanguard',
+    biome: 'Sky Forge',
+    moveTypes: ['steel', 'flying', 'electric', 'fighting'],
+    signatureMoves: ['omni-directional-slash', 'thunder-spear', 'ackerman-focus', 'clean-cut'],
+    transformationModes: ['mega', 'variant'],
+    acquisitionNote: 'Limited mobility banner focused on extreme speed, clean pivots, and execution-heavy closers.',
+    stages: [
+      { slug: 'levi-ackerman', name: 'Levi Ackerman', stage: 1, types: ['steel', 'flying'], baseStats: { hp: 74, atk: 92, def: 68, spa: 50, spd: 66, spe: 102 }, abilityPool: ['battle-aura', 'adaptability'], hiddenAbilitySlug: 'technician', rarity: 'rare', evolveLevel: 40, guideHint: 'Pure speed attacker that wins by never giving tempo back.' },
+      { slug: 'captain-levi', name: 'Captain Levi', stage: 2, types: ['steel', 'flying'], baseStats: { hp: 86, atk: 114, def: 80, spa: 60, spd: 78, spe: 124 }, abilityPool: ['adaptability', 'technician'], hiddenAbilitySlug: 'battle-aura', rarity: 'epic', evolveLevel: 76, guideHint: 'Fast cleaner that strips defense and punishes bad positioning.' },
+      { slug: 'humanitys-strongest-levi', name: 'Humanity\'s Strongest Levi', stage: 3, types: ['steel', 'fighting'], baseStats: { hp: 98, atk: 132, def: 92, spa: 68, spd: 90, spe: 138 }, abilityPool: ['adaptability', 'technician'], hiddenAbilitySlug: 'prism-surge', rarity: 'legendary', guideHint: 'Execution-heavy speed cleaner that loves Mega or Variant tempo spikes.' },
+    ],
+  },
 ];
 
 function limitedCatchRateForRarity(rarity) {
@@ -2077,6 +2239,14 @@ function appendLimitedEventSpecies(families, moveIdsByType, moveLookup, moveSlug
         limitedEdition: true,
         limitedSeries: line.series,
         limitedBanner: line.banner,
+        guideHint: entry.guideHint || line.guideHint || null,
+        acquisitionNote: entry.acquisitionNote || line.acquisitionNote || null,
+        transformationModes: Array.isArray(entry.transformationModes)
+          ? [...entry.transformationModes]
+          : Array.isArray(line.transformationModes)
+            ? [...line.transformationModes]
+            : null,
+        transformationNote: entry.transformationNote || line.transformationNote || null,
       });
     });
   });
@@ -3254,6 +3424,23 @@ export const CONTENT = {
   chatEmojiSets: CHAT_EMOJI_SETS,
   chatEmojiCatalog: SOCIAL_EMOJI_CATEGORIES,
 };
+
+const BATTLE_TRANSFORMATION_MODES = ['mega', 'ultra', 'dynamax', 'variant'];
+
+export function transformationModesForSpecies(speciesOrId) {
+  const species = typeof speciesOrId === 'number' ? SPECIES_MAP.get(speciesOrId) : speciesOrId;
+  if (!species) {
+    return [];
+  }
+  const explicit = Array.isArray(species.transformationModes)
+    ? [...new Set(species.transformationModes.filter((mode) => BATTLE_TRANSFORMATION_MODES.includes(mode)))]
+    : null;
+  return explicit || [...BATTLE_TRANSFORMATION_MODES];
+}
+
+function speciesSupportsTransformationMode(speciesOrId, mode) {
+  return transformationModesForSpecies(speciesOrId).includes(mode);
+}
 
 function currentWorldClock(reference = new Date()) {
   const date = reference instanceof Date ? reference : new Date(reference);
@@ -5515,6 +5702,92 @@ export function getNewsState(userId) {
   };
 }
 
+const LIMITED_BANNER_RARITY_ORDER = { mythic: 5, legendary: 4, epic: 3, rare: 2, common: 1 };
+
+function buildLimitedBannerCatalog(reference = new Date()) {
+  const grouped = new Map();
+  SPECIES.filter((species) => species.limitedEdition).forEach((species) => {
+    const key = `${species.limitedSeries || 'Crossover'}|${species.limitedBanner || 'Special Rotation'}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        series: species.limitedSeries || 'Crossover',
+        banner: species.limitedBanner || 'Special Rotation',
+        species: [],
+      });
+    }
+    grouped.get(key).species.push(species);
+  });
+  const clock = currentWorldClock(reference);
+  const banners = [...grouped.values()]
+    .map((entry) => {
+      const species = [...entry.species].sort((left, right) => {
+        const rarityGap = (LIMITED_BANNER_RARITY_ORDER[right.rarity] || 0) - (LIMITED_BANNER_RARITY_ORDER[left.rarity] || 0);
+        if (rarityGap) {
+          return rarityGap;
+        }
+        return (right.total || 0) - (left.total || 0) || left.name.localeCompare(right.name);
+      });
+      const catchRates = species.map((unit) => Number(unit.catchRate || 0)).filter((value) => value > 0);
+      return {
+        ...entry,
+        species,
+        typeSet: [...new Set(species.flatMap((unit) => unit.types || []))],
+        transformReady: species.filter((unit) => transformationModesForSpecies(unit).length).length,
+        minCatchRate: catchRates.length ? Math.min(...catchRates) : 0,
+        maxCatchRate: catchRates.length ? Math.max(...catchRates) : 0,
+        mythicCount: species.filter((unit) => unit.rarity === 'mythic').length,
+      };
+    })
+    .sort((left, right) => left.series.localeCompare(right.series) || left.banner.localeCompare(right.banner));
+  const activeIndices = new Set();
+  const activeCount = Math.min(4, banners.length);
+  let cursor = banners.length ? (Math.floor(reference.getTime() / 86400000) * 3 + clock.hour) % banners.length : 0;
+  while (activeIndices.size < activeCount && banners.length) {
+    activeIndices.add(cursor % banners.length);
+    cursor += 2;
+  }
+  return banners.map((entry, index) => ({
+    ...entry,
+    active: activeIndices.has(index),
+    rotationMinutesRemaining: 60 - clock.minute || 60,
+  }));
+}
+
+export function getEventsState(userId) {
+  const base = getHubState(userId);
+  const news = getNewsState(userId);
+  const banners = buildLimitedBannerCatalog(new Date());
+  const featuredBanners = banners.filter((entry) => entry.active);
+  const featuredUnits = featuredBanners
+    .flatMap((banner) => banner.species.slice(0, 4).map((species) => ({
+      species,
+      series: banner.series,
+      banner: banner.banner,
+      transformationModes: transformationModesForSpecies(species),
+      catchRatePercent: Math.round(Number(species.catchRate || 0) * 1000) / 10,
+    })))
+    .sort((left, right) => (LIMITED_BANNER_RARITY_ORDER[right.species.rarity] || 0) - (LIMITED_BANNER_RARITY_ORDER[left.species.rarity] || 0) || (right.species.total || 0) - (left.species.total || 0))
+    .slice(0, 12);
+  return {
+    ...base,
+    headlines: news.headlines,
+    upcoming: news.upcoming,
+    banners,
+    featuredBanners,
+    featuredUnits,
+    saveSummary: {
+      deviceBackupReady: !!createSignedDeviceSave(userId),
+      protectedScopes: ['account', 'cash', 'collection', 'inventory', 'runs', 'trainer progress'],
+      trainerLevel: Number(base.progression?.profile?.level || 1),
+      caughtCount: Number(base.caughtSpeciesIds.length || 0),
+      visibleCollectionCount: Number(base.capturedCollection.length || 0),
+      favoriteCount: Number(base.favoriteEntries.length || 0),
+      lastSyncedAt: base.lastRuns[0]?.updatedAt || base.user.last_login || base.user.created_at || nowIso(),
+    },
+  };
+}
+
 function gymLeaderRoster(type, seed, levelBase = 18) {
   const pool = SPECIES.filter((species) => species.types.includes(type) && species.stage >= 1);
   return Array.from({ length: 6 }, (_, index) => {
@@ -6149,23 +6422,25 @@ function consumeHeldItem(monster, encounter, reason) {
 function canMegaEvolve(monster) {
   const species = SPECIES_MAP.get(monster?.speciesId);
   const heldItem = getHeldItem(monster);
-  return !!species && species.stage >= 2 && heldItem?.holdEffect === 'mega-stone' && !hasBattleForm(monster);
+  return !!species && speciesSupportsTransformationMode(species, 'mega') && species.stage >= 2 && heldItem?.holdEffect === 'mega-stone' && !hasBattleForm(monster);
 }
 
 function canUltraBurst(monster) {
   const species = SPECIES_MAP.get(monster?.speciesId);
   const heldItem = getHeldItem(monster);
-  return !!species && species.stage >= 3 && heldItem?.holdEffect === 'ultra-core' && !hasBattleForm(monster);
+  return !!species && speciesSupportsTransformationMode(species, 'ultra') && species.stage >= 3 && heldItem?.holdEffect === 'ultra-core' && !hasBattleForm(monster);
 }
 
 function canDynamax(monster) {
+  const species = SPECIES_MAP.get(monster?.speciesId);
   const heldItem = getHeldItem(monster);
-  return heldItem?.holdEffect === 'dynamax-band' && !hasBattleForm(monster);
+  return !!species && speciesSupportsTransformationMode(species, 'dynamax') && heldItem?.holdEffect === 'dynamax-band' && !hasBattleForm(monster);
 }
 
 function canVariantShift(monster) {
+  const species = SPECIES_MAP.get(monster?.speciesId);
   const heldItem = getHeldItem(monster);
-  return heldItem?.holdEffect === 'variant-core' && !hasBattleForm(monster);
+  return !!species && speciesSupportsTransformationMode(species, 'variant') && heldItem?.holdEffect === 'variant-core' && !hasBattleForm(monster);
 }
 
 function canUseZMove(monster, move) {
@@ -11637,6 +11912,8 @@ export function purchasePersistentItem(userId, itemSlug, quantity = 1) {
   saveUserMeta(userId, user.meta);
   return getUserById(userId);
 }
+
+
 
 
 

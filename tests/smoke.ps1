@@ -1,27 +1,35 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 $port = 3123
-$root = "http://localhost:$port"
+$root = "http://127.0.0.1:$port"
 $tempRoot = Join-Path $env:TEMP ("moemon-smoke-" + [guid]::NewGuid().ToString('N'))
 $dbPath = Join-Path $tempRoot 'moemon.sqlite'
 $backupPath = Join-Path $tempRoot 'world-backup.json'
+$stdoutLog = Join-Path $tempRoot 'server.out.log'
+$stderrLog = Join-Path $tempRoot 'server.err.log'
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-$job = Start-Job -ArgumentList $dbPath, $backupPath -ScriptBlock {
-  param($dbPathArg, $backupPathArg)
-  Set-Location 'c:\Moemon'
-  $env:PORT = '3123'
-  $env:APP_ORIGIN = 'http://localhost:3123'
-  $env:MOEMON_DB_PATH = $dbPathArg
-  $env:MOEMON_WORLD_BACKUP_PATH = $backupPathArg
-  node src/server.js
-}
+$serverCommand = "`$env:PORT='$port'; `$env:APP_ORIGIN='http://127.0.0.1:$port'; `$env:MOEMON_DB_PATH='$dbPath'; `$env:MOEMON_WORLD_BACKUP_PATH='$backupPath'; Set-Location 'c:\Moemon'; node src/server.js"
+$process = Start-Process powershell -ArgumentList '-NoProfile', '-Command', $serverCommand -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
 
 try {
-  Start-Sleep -Seconds 2
   $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 
-  $landing = Invoke-WebRequest -Uri "$root/" -UseBasicParsing
-  if ($landing.StatusCode -ne 200 -or $landing.Content -notlike '*Moemon Arena*') {
-    throw 'Landing page failed.'
+  $landing = $null
+  for ($attempt = 0; $attempt -lt 24; $attempt += 1) {
+    if ($process.HasExited) {
+      break
+    }
+    try {
+      $landing = Invoke-WebRequest -Uri "$root/" -UseBasicParsing -TimeoutSec 2
+      break
+    }
+    catch {
+      Start-Sleep -Milliseconds 500
+    }
+  }
+  if (-not $landing -or $landing.StatusCode -ne 200 -or $landing.Content -notlike '*Moemon Arena*') {
+    $stdout = if (Test-Path $stdoutLog) { Get-Content $stdoutLog -Raw } else { '' }
+    $stderr = if (Test-Path $stderrLog) { Get-Content $stderrLog -Raw } else { '' }
+    throw "Landing page failed.`nSTDOUT:`n$stdout`nSTDERR:`n$stderr"
   }
 
   $name = 'tester' + [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -32,6 +40,28 @@ try {
   $hub = Invoke-WebRequest -Uri "$root/hub" -WebSession $session -UseBasicParsing
   if ($hub.Content -notlike '*Storage preview*') {
     throw 'Hub page did not render for registered user.'
+  }
+  if ($hub.Content -notlike '*href="/admin"*') {
+    throw 'Admin shortcut did not render for the first admin account.'
+  }
+
+  $events = Invoke-WebRequest -Uri "$root/events" -WebSession $session -UseBasicParsing
+  if ($events.Content -notlike '*Limited Banner Rotations*') {
+    throw 'Events page did not render.'
+  }
+
+  $build = Invoke-WebRequest -Uri "$root/builds/yuta-okkotsu" -WebSession $session -UseBasicParsing
+  if ($build.Content -notlike '*Yuta Okkotsu*' -or $build.Content -notlike '*Queen of Curses*') {
+    throw 'Expanded limited build guide did not render.'
+  }
+
+  $playerSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+  $name2 = 'player' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+  $email2 = "$name2@example.com"
+  Invoke-WebRequest -Uri "$root/register" -Method Post -Body @{ username = $name2; email = $email2; password = 'StrongPass1' } -WebSession $playerSession -UseBasicParsing -MaximumRedirection 0 -ErrorAction SilentlyContinue | Out-Null
+  $playerHub = Invoke-WebRequest -Uri "$root/hub" -WebSession $playerSession -UseBasicParsing
+  if ($playerHub.Content -like '*href="/admin"*') {
+    throw 'Player hub leaked the admin shortcut.'
   }
 
   Start-Sleep -Milliseconds 700
@@ -60,12 +90,19 @@ try {
   Write-Output 'Smoke test passed.'
 }
 finally {
-  if ($job) {
-    Stop-Job $job -ErrorAction SilentlyContinue | Out-Null
-    Receive-Job $job -ErrorAction SilentlyContinue | Out-Null
-    Remove-Job $job -ErrorAction SilentlyContinue | Out-Null
+  if ($process -and -not $process.HasExited) {
+    Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
   }
   if (Test-Path $tempRoot) {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
+
+
+
+
+
+
+
+
+

@@ -1,4 +1,4 @@
-﻿import { CONTENT } from './core.js';
+import { CONTENT, transformationModesForSpecies } from './core.js';
 
 const STAT_KEYS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
 const STAT_LABELS = { hp: 'HP', atk: 'Atk', def: 'Def', spa: 'SpA', spd: 'SpD', spe: 'Spe' };
@@ -52,6 +52,70 @@ function generationForSpecies(species) {
 function moveUnlockLevel(species, index) {
   const stageShift = species?.stage === 1 ? 0 : species?.stage === 2 ? -4 : species?.stage === 3 ? -8 : -12;
   return Math.max(1, Math.min(100, (MOVE_UNLOCKS[index] || 100) + stageShift));
+}
+
+const TRANSFORMATION_LABELS = {
+  mega: 'Mega',
+  ultra: 'Ultra Burst',
+  dynamax: 'Dynamax',
+  variant: 'Variant',
+};
+const TRANSFORMATION_ITEM_SLUGS = {
+  mega: 'mega-emblem',
+  ultra: 'ultra-core',
+  dynamax: 'max-band',
+  variant: 'variant-prism',
+};
+
+function eligibleTransformationModes(species) {
+  return transformationModesForSpecies(species).filter((mode) => {
+    if (mode === 'mega') {
+      return Number(species?.stage || 0) >= 2;
+    }
+    if (mode === 'ultra') {
+      return Number(species?.stage || 0) >= 3;
+    }
+    return true;
+  });
+}
+
+function buildTransformationPlan(species, profile) {
+  const modes = eligibleTransformationModes(species);
+  if (!modes.length) {
+    return {
+      modes: [],
+      labels: [],
+      primary: null,
+      primaryLabel: 'Base Form Only',
+      item: null,
+      summary: species.transformationNote || 'This unit is balanced around staying in base form.',
+    };
+  }
+  let primary = modes[0];
+  if (profile.fast && modes.includes('variant')) {
+    primary = 'variant';
+  } else if (profile.bulky && modes.includes('dynamax')) {
+    primary = 'dynamax';
+  } else if (Number(species?.stage || 0) >= 3 && modes.includes('ultra')) {
+    primary = 'ultra';
+  } else if (modes.includes('mega')) {
+    primary = 'mega';
+  }
+  const summaries = {
+    mega: 'Mega Emblem is the cleanest all-round spike when this build wants more immediate stat value.',
+    ultra: 'Ultra Core is the best late-game burst because this form is already fully evolved.',
+    dynamax: 'Max Band is the safest line when this build wants extra bulk and setup turns.',
+    variant: 'Variant Prism is the tempo option when you want a trickier move layout or faster pressure.',
+  };
+  const item = CONTENT.itemMap.get(TRANSFORMATION_ITEM_SLUGS[primary]) || null;
+  return {
+    modes,
+    labels: modes.map((mode) => TRANSFORMATION_LABELS[mode] || titleLabel(mode)),
+    primary,
+    primaryLabel: TRANSFORMATION_LABELS[primary] || titleLabel(primary),
+    item,
+    summary: species.transformationNote || summaries[primary] || 'Transformation gear gives this line another battle angle.',
+  };
 }
 
 function orderedStats(stats) {
@@ -516,7 +580,7 @@ function evolutionTargets(species) {
   return options;
 }
 
-function buildGuideNotes(species, profile, nature, ability, items, moveBundle) {
+function buildGuideNotes(species, profile, nature, ability, items, moveBundle, transformation) {
   const notes = [];
   if (species.evolvesTo) {
     const target = CONTENT.speciesMap.get(species.evolvesTo);
@@ -532,6 +596,17 @@ function buildGuideNotes(species, profile, nature, ability, items, moveBundle) {
   }
   if (species.limitedEdition) {
     notes.push(`Limited event unit: ${species.limitedSeries || 'Crossover'} banner ${species.limitedBanner || 'Special Rotation'}.`);
+  }
+  if (species.guideHint) {
+    notes.push(species.guideHint);
+  }
+  if (species.acquisitionNote) {
+    notes.push(species.acquisitionNote);
+  }
+  if (transformation?.modes?.length) {
+    notes.push(`Transform path: ${transformation.primaryLabel} via ${transformation.item?.name || 'special gear'}. ${transformation.summary}`);
+  } else if (species.transformationNote) {
+    notes.push(species.transformationNote);
   }
   switch (ability?.slug) {
     case 'intimidate':
@@ -574,7 +649,7 @@ function buildGuideNotes(species, profile, nature, ability, items, moveBundle) {
   if (nature?.up) {
     notes.push(`${nature.name} is recommended to lean even harder into ${STAT_LABELS[nature.up]}.`);
   }
-  return notes.slice(0, 5);
+  return notes.slice(0, 6);
 }
 
 function blankSpread(value = 0) {
@@ -766,6 +841,7 @@ function createBuildGuide(species) {
   const itemChoices = chooseItems(species, profile, moveBundle, abilityChoices.primary);
   const evBuild = recommendEvSpread(species, profile, abilityChoices.primary, moveBundle);
   const ivBuild = recommendIvSpread(species, profile);
+  const transformation = buildTransformationPlan(species, profile);
   return {
     speciesId: species.id,
     slug: species.slug,
@@ -783,11 +859,16 @@ function createBuildGuide(species) {
     attackAxis: profile.attackAxis,
     fast: profile.fast,
     bulky: profile.bulky,
+    limitedEdition: !!species.limitedEdition,
+    limitedSeries: species.limitedSeries || '',
+    limitedBanner: species.limitedBanner || '',
+    acquisitionNote: species.acquisitionNote || '',
     nature,
     ability: abilityChoices.primary,
     altAbilities: abilityChoices.alternatives,
     item: itemChoices.primary,
     altItems: itemChoices.alternatives,
+    transformation,
     evSpread: evBuild.spread,
     evSummary: evBuild.summary,
     evHighlights: evBuild.highlights,
@@ -803,8 +884,8 @@ function createBuildGuide(species) {
     allMoves: moveBundle.allMoves,
     moveCount: moveBundle.allMoves.length,
     evolutions: evolutionTargets(species),
-    notes: buildGuideNotes(species, profile, nature, abilityChoices.primary, itemChoices, moveBundle),
-    searchText: `${species.id} ${species.name} ${species.slug} ${species.types.join(' ')} ${profile.roleLabel} ${(abilityChoices.primary?.name || '')} ${(itemChoices.primary?.name || '')} ${species.limitedEdition ? `limited ${species.limitedSeries || ''} ${species.limitedBanner || ''}` : ''} ${evBuild.summary} ${ivBuild.summary}`.toLowerCase(),
+    notes: buildGuideNotes(species, profile, nature, abilityChoices.primary, itemChoices, moveBundle, transformation),
+    searchText: `${species.id} ${species.name} ${species.slug} ${species.types.join(' ')} ${profile.roleLabel} ${(abilityChoices.primary?.name || '')} ${(itemChoices.primary?.name || '')} ${species.limitedEdition ? `limited ${species.limitedSeries || ''} ${species.limitedBanner || ''}` : ''} ${(transformation.labels || []).join(' ')} ${species.acquisitionNote || ''} ${evBuild.summary} ${ivBuild.summary}`.toLowerCase(),
   };
 }
 
@@ -839,6 +920,10 @@ export function getBuildDexState(selectedReference = '') {
     roleOptions: [...roleMap.values()].sort((left, right) => left.label.localeCompare(right.label)),
   };
 }
+
+
+
+
 
 
 
