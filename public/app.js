@@ -1433,11 +1433,67 @@ initSearchStories();
 const moemonAppState = window.__moemonAppState || (window.__moemonAppState = {
   tabMemory: {},
   softNavigationReady: false,
+  commandMenusReady: false,
   navigation: {
     requestId: 0,
     controller: null,
   },
 });
+
+function closestFromTarget(target, selector) {
+  return target instanceof Element ? target.closest(selector) : null;
+}
+
+function closeOpenCommandMenus(exceptMenu = null) {
+  document.querySelectorAll('[data-command-menu][open]').forEach((menu) => {
+    if (menu !== exceptMenu) {
+      menu.open = false;
+    }
+  });
+}
+
+function initCommandMenus(root = document) {
+  root.querySelectorAll('[data-command-menu]').forEach((menu) => {
+    if (menu.dataset.commandHydrated === 'true') {
+      return;
+    }
+    menu.dataset.commandHydrated = 'true';
+
+    const summary = menu.querySelector('summary');
+    if (summary) {
+      summary.addEventListener('click', (event) => {
+        event.preventDefault();
+        const nextOpen = !menu.open;
+        closeOpenCommandMenus(nextOpen ? menu : null);
+        menu.open = nextOpen;
+      });
+    }
+
+    menu.querySelectorAll('.command-link').forEach((link) => {
+      link.addEventListener('click', () => {
+        menu.open = false;
+      });
+    });
+  });
+
+  if (moemonAppState.commandMenusReady) {
+    return;
+  }
+  moemonAppState.commandMenusReady = true;
+
+  document.addEventListener('click', (event) => {
+    if (closestFromTarget(event.target, '[data-command-menu]')) {
+      return;
+    }
+    closeOpenCommandMenus();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeOpenCommandMenus();
+    }
+  });
+}
 
 function safeSessionStorageSet(key, value) {
   try {
@@ -1453,6 +1509,138 @@ function safeSessionStorageGet(key) {
   } catch {
     return '';
   }
+}
+
+const DEVICE_SAVE_STORAGE_KEY = 'moemon-device-save';
+
+function safeLocalStorageSet(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function safeLocalStorageGet(key) {
+  try {
+    return window.localStorage.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function safeLocalStorageRemove(key) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function readStoredDeviceSave() {
+  const raw = safeLocalStorageGet(DEVICE_SAVE_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const envelope = JSON.parse(raw);
+    if (!envelope || typeof envelope.payload !== 'string' || typeof envelope.signature !== 'string') {
+      safeLocalStorageRemove(DEVICE_SAVE_STORAGE_KEY);
+      return null;
+    }
+    const snapshot = JSON.parse(envelope.payload || '{}');
+    return { envelope, snapshot };
+  } catch {
+    safeLocalStorageRemove(DEVICE_SAVE_STORAGE_KEY);
+    return null;
+  }
+}
+
+function syncDeviceSaveSnapshot() {
+  const node = document.getElementById('moemon-device-save');
+  const raw = node?.textContent || '';
+  if (!raw.trim()) {
+    return;
+  }
+  safeLocalStorageSet(DEVICE_SAVE_STORAGE_KEY, raw);
+}
+
+async function restoreStoredDeviceSave(button, status) {
+  const saved = readStoredDeviceSave();
+  if (!saved?.envelope) {
+    status.textContent = 'No local save was found on this device.';
+    return;
+  }
+  button.disabled = true;
+  status.textContent = 'Restoring your saved account...';
+  try {
+    const response = await fetch('/auth/device-restore', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ backup: saved.envelope }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || 'Restore failed.');
+    }
+    status.textContent = 'Save restored. Opening the hub...';
+    window.location.assign(payload.redirect || '/hub');
+  } catch (error) {
+    button.disabled = false;
+    status.textContent = error?.message || 'Restore failed.';
+  }
+}
+
+function initDeviceSaveRestore(root = document) {
+  const saved = readStoredDeviceSave();
+  root.querySelectorAll('[data-device-restore-slot]').forEach((slot) => {
+    slot.replaceChildren();
+    if (!saved?.envelope) {
+      slot.hidden = true;
+      return;
+    }
+
+    const snapshot = saved.snapshot || {};
+    const username = snapshot.user?.username || 'saved trainer';
+    const syncedAt = snapshot.issuedAt ? new Date(snapshot.issuedAt) : null;
+    const syncedLabel = syncedAt && !Number.isNaN(syncedAt.getTime()) ? syncedAt.toLocaleString() : 'this device';
+
+    const card = document.createElement('section');
+    card.className = 'device-restore-card panelish';
+
+    const heading = document.createElement('strong');
+    heading.textContent = 'Restore local save';
+    card.appendChild(heading);
+
+    const copy = document.createElement('p');
+    copy.className = 'muted';
+    copy.textContent = `A backup for ${username} is stored on this device.`;
+    card.appendChild(copy);
+
+    const actions = document.createElement('div');
+    actions.className = 'button-row';
+    const button = document.createElement('button');
+    button.className = 'button accent';
+    button.type = 'button';
+    button.textContent = `Restore ${username}`;
+    actions.appendChild(button);
+    card.appendChild(actions);
+
+    const status = document.createElement('p');
+    status.className = 'muted device-restore-status';
+    status.textContent = `Last synced ${syncedLabel}.`;
+    card.appendChild(status);
+
+    button.addEventListener('click', () => {
+      restoreStoredDeviceSave(button, status);
+    });
+
+    slot.hidden = false;
+    slot.appendChild(card);
+  });
 }
 
 function tabMemoryKey(group, index = 0) {
@@ -1569,6 +1757,7 @@ function hydrateMoemonPage() {
   hydrateAutoscroll();
   hydrateBattleMessages();
   hydrateDraftSwitchers();
+  initCommandMenus();
   initPokedexFilters();
   initTeamBuilder(dashboard);
   initBattleSimulator(dashboard);
@@ -1580,6 +1769,8 @@ function hydrateMoemonPage() {
   initPartyBuilder();
   initBattleLab();
   initSearchStories();
+  syncDeviceSaveSnapshot();
+  initDeviceSaveRestore();
 }
 
 function updateCurrentHistoryState(scrollX = window.scrollX, scrollY = window.scrollY) {
@@ -1880,6 +2071,9 @@ function initSoftNavigation() {
   });
 }
 
+initCommandMenus();
+syncDeviceSaveSnapshot();
+initDeviceSaveRestore();
 initSoftNavigation();
 
 

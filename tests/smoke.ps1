@@ -1,10 +1,17 @@
 ﻿$ErrorActionPreference = 'Stop'
 $port = 3123
 $root = "http://localhost:$port"
-$job = Start-Job -ScriptBlock {
+$tempRoot = Join-Path $env:TEMP ("moemon-smoke-" + [guid]::NewGuid().ToString('N'))
+$dbPath = Join-Path $tempRoot 'moemon.sqlite'
+$backupPath = Join-Path $tempRoot 'world-backup.json'
+New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+$job = Start-Job -ArgumentList $dbPath, $backupPath -ScriptBlock {
+  param($dbPathArg, $backupPathArg)
   Set-Location 'c:\Moemon'
   $env:PORT = '3123'
   $env:APP_ORIGIN = 'http://localhost:3123'
+  $env:MOEMON_DB_PATH = $dbPathArg
+  $env:MOEMON_WORLD_BACKUP_PATH = $backupPathArg
   node src/server.js
 }
 
@@ -27,6 +34,15 @@ try {
     throw 'Hub page did not render for registered user.'
   }
 
+  Start-Sleep -Milliseconds 700
+  if (-not (Test-Path $backupPath)) {
+    throw 'World backup snapshot was not written.'
+  }
+  $backupContent = Get-Content $backupPath -Raw
+  if ($backupContent -notlike "*$email*") {
+    throw 'World backup snapshot did not include the registered account.'
+  }
+
   $setup = Invoke-WebRequest -Uri "$root/play/new" -WebSession $session -UseBasicParsing
   $starterMatch = [regex]::Match($setup.Content, 'name="starter" value="(\d+)"')
   if (-not $starterMatch.Success) {
@@ -37,7 +53,7 @@ try {
   Invoke-WebRequest -Uri "$root/play/new" -Method Post -Body $body -ContentType 'application/x-www-form-urlencoded' -WebSession $session -UseBasicParsing -MaximumRedirection 0 -ErrorAction SilentlyContinue | Out-Null
 
   $play = Invoke-WebRequest -Uri "$root/play" -WebSession $session -UseBasicParsing
-  if ($play.Content -notlike '*Move deck*') {
+  if ($play.Content -notlike '*Choose Your Action*') {
     throw 'Battle screen did not render.'
   }
 
@@ -48,5 +64,8 @@ finally {
     Stop-Job $job -ErrorAction SilentlyContinue | Out-Null
     Receive-Job $job -ErrorAction SilentlyContinue | Out-Null
     Remove-Job $job -ErrorAction SilentlyContinue | Out-Null
+  }
+  if (Test-Path $tempRoot) {
+    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
   }
 }

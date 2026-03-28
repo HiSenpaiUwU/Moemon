@@ -1,4 +1,4 @@
-import { CONTENT } from './core.js';
+﻿import { CONTENT } from './core.js';
 
 const STAT_KEYS = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
 const STAT_LABELS = { hp: 'HP', atk: 'Atk', def: 'Def', spa: 'SpA', spd: 'SpD', spe: 'Spe' };
@@ -166,13 +166,22 @@ function chooseNature(profile) {
     : (findNature('atk', 'spd') || findNature('spa', 'def') || neutralNature());
 }
 
+function abilityOptionsForSpecies(species) {
+  return [...new Set([...(species?.abilityPool || []), species?.hiddenAbilitySlug].filter(Boolean))];
+}
+
 function scoreMove(move, species, profile) {
+  const abilitySlugs = abilityOptionsForSpecies(species);
+  const effect = String(move.effect || '');
+  const role = String(move.role || '');
+  const isStatus = move.category === 'status';
+  const isStab = species.types.includes(move.type);
   let score = Number(move.tier || 0) * 30;
-  if (move.category === 'status') {
+  if (isStatus) {
     score += profile.bulky ? 40 : 18;
   } else {
     score += Number(move.power || 0);
-    if (species.types.includes(move.type)) {
+    if (isStab) {
       score += 38;
     }
     if (profile.attackAxis !== 'mixed') {
@@ -187,14 +196,41 @@ function scoreMove(move, species, profile) {
   if (Number(move.accuracy || 100) < 90) {
     score -= 6;
   }
-  if (/buff|heal|weather|guard|screen|seed/.test(String(move.effect || ''))) {
+  if (/buff|heal|weather|guard|screen|seed/.test(effect)) {
     score += profile.bulky ? 16 : 8;
   }
-  if (/paralyze|burn|poison|sleep|freeze/.test(String(move.effect || ''))) {
+  if (/paralyze|burn|poison|sleep|freeze/.test(effect)) {
     score += 11;
   }
-  if (/high damage|special attack|attack break|speed control/i.test(String(move.role || ''))) {
+  if (/high damage|special attack|attack break|speed control/i.test(role)) {
     score += 8;
+  }
+  if ((abilitySlugs.includes('adaptability') || abilitySlugs.includes('prism-surge')) && isStab && !isStatus) {
+    score += 14;
+  }
+  if (abilitySlugs.includes('technician') && !isStatus && Number(move.power || 0) <= 60) {
+    score += 18;
+  }
+  if (abilitySlugs.includes('reckless') && effect === 'recoil') {
+    score += 24;
+  }
+  if (abilitySlugs.includes('sniper') && !isStatus && (Number(move.power || 0) >= 100 || /high damage|risk damage|armor break/i.test(role))) {
+    score += 10;
+  }
+  if ((abilitySlugs.includes('swift-swim') && effect === 'weather-rain') || (abilitySlugs.includes('chlorophyll') && effect === 'weather-sun')) {
+    score += 18;
+  }
+  if ((abilitySlugs.includes('intimidate') || abilitySlugs.includes('filter') || abilitySlugs.includes('natural-cure') || abilitySlugs.includes('regenerator')) && isStatus) {
+    score += 12;
+  }
+  if ((abilitySlugs.includes('water-absorb') || abilitySlugs.includes('volt-absorb')) && /heal|cleanse|buff-def|buff-spd/.test(effect)) {
+    score += 10;
+  }
+  if (abilitySlugs.includes('guts') && !isStatus && move.category === 'physical') {
+    score += 8;
+  }
+  if (species.limitedEdition && move.limitedSignature) {
+    score += isStatus ? 24 : 40;
   }
   return score;
 }
@@ -259,10 +295,12 @@ function selectBuildMoves(species, profile) {
     allMoves: [...learnsetRows].sort((left, right) => left.unlockLevel - right.unlockLevel || right.score - left.score || left.id - right.id),
     supportCount: supportMoves.length,
     lowPowerCount: attacks.filter((row) => Number(row.power || 0) <= 60).length,
-    critLean: rankedMoves.filter((row) => /crit/i.test(String(row.role || '')) || /crit/i.test(String(row.effect || ''))).length,
+    critLean: attacks.filter((row) => Number(row.power || 0) >= 100 || /high damage|risk damage|armor break/i.test(String(row.role || ''))).length,
     weatherCount: supportMoves.filter((row) => /^weather-/.test(String(row.effect || ''))).length,
     inaccurateCount: attacks.filter((row) => Number(row.accuracy || 100) < 90).length,
     drainCount: attacks.filter((row) => /drain/i.test(String(row.effect || ''))).length,
+    recoilCount: attacks.filter((row) => row.effect === 'recoil').length,
+    pivotCount: rankedMoves.filter((row) => ['heal', 'cleanse', 'buff-def', 'buff-spd'].includes(String(row.effect || ''))).length,
   };
 }
 
@@ -276,13 +314,31 @@ function abilityScore(abilitySlug, species, profile, moveBundle) {
       score += 36 + moveBundle.coreMoves.filter((row) => species.types.includes(row.type) && row.category !== 'status').length * 5;
       break;
     case 'technician':
-      score += 12 + moveBundle.lowPowerCount * 8;
+      score += 14 + moveBundle.lowPowerCount * 8;
       break;
     case 'sniper':
-      score += 10 + moveBundle.critLean * 10;
+      score += 12 + moveBundle.critLean * 7;
       break;
     case 'regenerator':
-      score += (profile.bulky ? 24 : 10) + moveBundle.supportCount * 4;
+      score += (profile.bulky ? 24 : 10) + moveBundle.supportCount * 4 + moveBundle.pivotCount * 3;
+      break;
+    case 'natural-cure':
+      score += (profile.bulky ? 20 : 10) + moveBundle.supportCount * 3 + moveBundle.drainCount * 2;
+      break;
+    case 'intimidate':
+      score += (profile.bulky ? 24 : 12) + moveBundle.pivotCount * 4;
+      break;
+    case 'water-absorb':
+      score += (species.types.includes('water') ? 14 : 10) + (profile.bulky ? 12 : 6) + moveBundle.pivotCount * 3;
+      break;
+    case 'volt-absorb':
+      score += (species.types.includes('electric') ? 14 : 10) + (profile.fast ? 10 : 6) + moveBundle.pivotCount * 2;
+      break;
+    case 'filter':
+      score += profile.bulky ? 28 : 14;
+      break;
+    case 'reckless':
+      score += 12 + moveBundle.recoilCount * 12 + (profile.attackAxis === 'physical' ? 8 : 0);
       break;
     case 'multiscale':
       score += profile.bulky ? 24 : 12;
@@ -327,7 +383,7 @@ function abilityScore(abilitySlug, species, profile, moveBundle) {
 }
 
 function chooseAbility(species, profile, moveBundle) {
-  const options = [...new Set([...(species.abilityPool || []), species.hiddenAbilitySlug].filter(Boolean))]
+  const options = abilityOptionsForSpecies(species)
     .map((slug) => ({
       slug,
       info: CONTENT.abilityMap.get(slug) || { slug, name: titleLabel(slug.replace(/-/g, ' ')), description: '' },
@@ -336,7 +392,7 @@ function chooseAbility(species, profile, moveBundle) {
     .sort((left, right) => right.score - left.score || left.info.name.localeCompare(right.info.name));
   return {
     primary: options[0]?.info || null,
-    alternatives: options.slice(1, 3).map((entry) => entry.info),
+    alternatives: options.slice(1, 4).map((entry) => entry.info),
   };
 }
 
@@ -348,12 +404,14 @@ function itemScore(item, species, profile, moveBundle, ability) {
       break;
     case 'leftovers':
       score += profile.bulky ? 34 : 14;
+      score += ['regenerator', 'natural-cure', 'water-absorb', 'volt-absorb', 'filter', 'intimidate'].includes(ability?.slug) ? 8 : 0;
       break;
     case 'rocky-helmet':
       score += profile.roleKey.includes('wall') ? 30 : 10;
       break;
     case 'life-orb':
       score += moveBundle.supportCount <= 1 ? 34 : 18;
+      score += ['adaptability', 'prism-surge', 'technician', 'reckless', 'magic-guard'].includes(ability?.slug) ? 8 : 0;
       break;
     case 'choice-band':
       score += profile.attackAxis === 'physical' && moveBundle.supportCount === 0 ? 38 : 8;
@@ -373,6 +431,7 @@ function itemScore(item, species, profile, moveBundle, ability) {
       break;
     case 'expert-belt':
       score += moveBundle.supportCount <= 1 ? 24 : 14;
+      score += ['adaptability', 'prism-surge'].includes(ability?.slug) ? 6 : 0;
       break;
     case 'muscle-band':
       score += profile.attackAxis === 'physical' ? 24 : 4;
@@ -385,6 +444,7 @@ function itemScore(item, species, profile, moveBundle, ability) {
       break;
     case 'shell-bell':
       score += 14 + moveBundle.drainCount * 4;
+      score += ability?.slug === 'reckless' ? 6 : 0;
       break;
     case 'big-root':
       score += moveBundle.drainCount ? 30 : -6;
@@ -399,7 +459,7 @@ function itemScore(item, species, profile, moveBundle, ability) {
       score += profile.attackAxis === 'physical' || profile.bulky ? 20 : 8;
       break;
     case 'ability-shield':
-      score += ['adaptability', 'prism-surge', 'regenerator', 'magic-guard', 'multiscale'].includes(ability?.slug) ? 20 : 8;
+      score += ['adaptability', 'prism-surge', 'regenerator', 'magic-guard', 'multiscale', 'intimidate', 'filter', 'water-absorb', 'volt-absorb', 'natural-cure', 'reckless'].includes(ability?.slug) ? 20 : 8;
       break;
     case 'power-bracer':
       score += profile.attackAxis === 'physical' ? 18 : 6;
@@ -470,6 +530,38 @@ function buildGuideNotes(species, profile, nature, ability, items, moveBundle) {
       notes.push(`Hidden ability option: ${hidden.name} can open a different endgame ceiling later on.`);
     }
   }
+  if (species.limitedEdition) {
+    notes.push(`Limited event unit: ${species.limitedSeries || 'Crossover'} banner ${species.limitedBanner || 'Special Rotation'}.`);
+  }
+  switch (ability?.slug) {
+    case 'intimidate':
+      notes.push('Intimidate makes this set a cleaner physical pivot, so look for safe entries against contact-heavy teams.');
+      break;
+    case 'water-absorb':
+      notes.push('Water Absorb gives this build a real switch-in angle. Use Water attacks as healing turns whenever possible.');
+      break;
+    case 'volt-absorb':
+      notes.push('Volt Absorb rewards aggressive doubles into Electric pressure, then cashing in the freer turn.');
+      break;
+    case 'filter':
+      notes.push('Filter turns marginally bad matchups into playable ones, so the set gets more value from patient trading than reckless forcing.');
+      break;
+    case 'reckless':
+      notes.push('Recoil attacks are part of the ceiling here. Spend HP to secure key KOs, not just to chip aimlessly.');
+      break;
+    case 'natural-cure':
+      notes.push('Natural Cure lets this set soak status for the team, then reset it by pivoting back out.');
+      break;
+    case 'regenerator':
+      notes.push('Regenerator rewards short, efficient field time. Trade, heal on the exit, and keep the cycle moving.');
+      break;
+    case 'swift-swim':
+    case 'chlorophyll':
+      notes.push('The weather button is not filler on this build. Setting your own speed condition is part of the plan.');
+      break;
+    default:
+      break;
+  }
   if (items.primary?.slug === 'eviolite') {
     notes.push('Eviolite is the cleanest bridge item here while this species can still evolve.');
   }
@@ -482,7 +574,7 @@ function buildGuideNotes(species, profile, nature, ability, items, moveBundle) {
   if (nature?.up) {
     notes.push(`${nature.name} is recommended to lean even harder into ${STAT_LABELS[nature.up]}.`);
   }
-  return notes.slice(0, 4);
+  return notes.slice(0, 5);
 }
 
 function blankSpread(value = 0) {
@@ -528,74 +620,111 @@ function preferredBulkStat(species) {
   return Number(species?.baseStats?.def || 0) >= Number(species?.baseStats?.spd || 0) ? 'def' : 'spd';
 }
 
-function recommendEvSpread(species, profile) {
-  const spread = blankSpread(0);
+function recommendEvSpread(species, profile, ability, moveBundle) {
+  let spread = blankSpread(0);
   const offenseStat = primaryOffenseStat(profile, species);
   const otherOffenseStat = offenseStat === 'atk' ? 'spa' : 'atk';
   const bulkStat = preferredBulkStat(species);
+  const abilitySlug = ability?.slug || '';
+  const abilityLabel = ability?.name || titleLabel(abilitySlug.replace(/-/g, ' '));
+  const sustainAbility = ['regenerator', 'natural-cure', 'water-absorb', 'volt-absorb'].includes(abilitySlug);
+  const defensiveAbility = ['intimidate', 'filter', 'multiscale', 'sturdy'].includes(abilitySlug);
+  const burstAbility = ['adaptability', 'prism-surge', 'technician', 'reckless', 'guts', 'sniper', 'battle-aura'].includes(abilitySlug);
+  const weatherAbility = ['swift-swim', 'chlorophyll'].includes(abilitySlug);
   let rationale = 'Spread the EVs into the stats this role actually uses.';
+  const setSpread = (entries) => {
+    spread = blankSpread(0);
+    entries.forEach(([stat, value]) => {
+      if (STAT_KEYS.includes(stat) && Number(value || 0) > 0) {
+        spread[stat] = Number(value || 0);
+      }
+    });
+  };
 
   if (profile.roleKey === 'physical-wall') {
-    spread.hp = 252;
-    spread.def = 252;
-    spread.spd = 4;
+    setSpread([['hp', 252], ['def', 252], ['spd', 4]]);
     rationale = 'Max HP and Defense first so this wall can soak physical pressure and still keep a small special cushion.';
   } else if (profile.roleKey === 'special-wall') {
-    spread.hp = 252;
-    spread.spd = 252;
-    spread.def = 4;
+    setSpread([['hp', 252], ['spd', 252], ['def', 4]]);
     rationale = 'Max HP and Special Defense first so this wall can stabilize against special pressure.';
   } else if (profile.attackAxis === 'mixed') {
     if (profile.fast) {
-      spread.spe = 252;
-      spread[offenseStat] = 128;
-      spread[otherOffenseStat] = 128;
+      setSpread([['spe', 252], [offenseStat, 128], [otherOffenseStat, 128]]);
       rationale = 'Max Speed first, then split the attacking EVs so both sides of the movepool stay live.';
     } else if (profile.bulky) {
-      spread.hp = 252;
-      spread[offenseStat] = 128;
-      spread[otherOffenseStat] = 128;
+      setSpread([['hp', 252], [offenseStat, 128], [otherOffenseStat, 128]]);
       rationale = 'Max HP first, then split the attacking EVs so the build can trade from both sides without feeling flimsy.';
     } else {
-      spread[offenseStat] = 252;
-      spread[otherOffenseStat] = 128;
-      spread.spe = 128;
+      setSpread([[offenseStat, 252], [otherOffenseStat, 128], ['spe', 128]]);
       rationale = 'Lean into the stronger offense, then keep enough Speed and second-side pressure to stay mixed.';
     }
   } else if (profile.attackAxis === 'physical') {
     if (profile.fast || profile.roleKey.includes('sweeper') || profile.roleKey.includes('breaker')) {
-      spread.atk = 252;
-      spread.spe = 252;
-      spread.hp = 4;
+      setSpread([['atk', 252], ['spe', 252], ['hp', 4]]);
       rationale = 'Max Attack and Speed so the build actually sweeps instead of landing in an awkward middle ground.';
     } else {
-      spread.hp = 252;
-      spread.atk = 252;
-      spread[bulkStat === 'def' ? 'spd' : 'def'] = 4;
+      setSpread([['hp', 252], ['atk', 252], [bulkStat === 'def' ? 'spd' : 'def', 4]]);
       rationale = 'Max HP and Attack so the bruiser profile keeps its damage while earning a sturdier entry.';
     }
   } else if (profile.attackAxis === 'special') {
     if (profile.fast || profile.roleKey.includes('sweeper') || profile.roleKey.includes('breaker')) {
-      spread.spa = 252;
-      spread.spe = 252;
-      spread.hp = 4;
+      setSpread([['spa', 252], ['spe', 252], ['hp', 4]]);
       rationale = 'Max Special Attack and Speed so the build can pressure early and keep tempo.';
     } else {
-      spread.hp = 252;
-      spread.spa = 252;
-      spread[bulkStat === 'def' ? 'spd' : 'def'] = 4;
+      setSpread([['hp', 252], ['spa', 252], [bulkStat === 'def' ? 'spd' : 'def', 4]]);
       rationale = 'Max HP and Special Attack so the special bruiser profile converts bulk into extra damage windows.';
     }
   } else if (profile.fast) {
-    spread[offenseStat] = 252;
-    spread.spe = 252;
-    spread.hp = 4;
+    setSpread([[offenseStat, 252], ['spe', 252], ['hp', 4]]);
     rationale = 'Fast pivots still want Speed maxed plus one real damage stat.';
   } else {
-    spread.hp = 252;
-    spread[offenseStat] = 252;
-    spread[bulkStat === 'def' ? 'spd' : 'def'] = 4;
+    setSpread([['hp', 252], [offenseStat, 252], [bulkStat === 'def' ? 'spd' : 'def', 4]]);
     rationale = 'Balanced pivots usually get more value from HP plus one pressure stat than from splitting everything thin.';
+  }
+
+  if (weatherAbility && !profile.roleKey.includes('wall') && profile.attackAxis !== 'mixed') {
+    setSpread([[offenseStat, 252], ['spe', 252], ['hp', 4]]);
+    rationale = `${abilityLabel} is a speed ability, so the spread commits to immediate tempo with max offense and Speed.`;
+  } else if (sustainAbility && (profile.bulky || !profile.fast)) {
+    if (profile.roleKey === 'physical-wall') {
+      setSpread([['hp', 252], ['def', 168], ['spd', 88]]);
+      rationale = `${abilityLabel} adds long-game value, so this wall shifts some EVs into its weaker special side instead of overcapping one lane.`;
+    } else if (profile.roleKey === 'special-wall') {
+      setSpread([['hp', 252], ['spd', 168], ['def', 88]]);
+      rationale = `${abilityLabel} adds long-game value, so this wall shifts some EVs into its weaker physical side instead of overcapping one lane.`;
+    } else if (profile.attackAxis === 'mixed') {
+      setSpread([['hp', 252], [offenseStat, 128], [otherOffenseStat, 84], [bulkStat, 44]]);
+      rationale = `${abilityLabel} gives this mixed set more staying power, so the EVs keep both offenses live while still buying extra bulk.`;
+    } else {
+      setSpread([['hp', 252], [offenseStat, 172], [bulkStat, 84]]);
+      rationale = `${abilityLabel} rewards repeat entries, so the spread trims some raw offense for sturdier mid-game turns.`;
+    }
+  } else if (defensiveAbility && (profile.bulky || profile.roleKey.includes('wall') || profile.roleKey.includes('bruiser'))) {
+    if (profile.roleKey === 'physical-wall') {
+      setSpread([['hp', 252], ['def', 168], ['spd', 88]]);
+      rationale = `${abilityLabel} already shores up key hits, so the EVs widen overall bulk instead of hard-stacking one defense.`;
+    } else if (profile.roleKey === 'special-wall') {
+      setSpread([['hp', 252], ['spd', 168], ['def', 88]]);
+      rationale = `${abilityLabel} already shores up key hits, so the EVs widen overall bulk instead of hard-stacking one defense.`;
+    } else {
+      setSpread([['hp', 252], [bulkStat, 168], [offenseStat, 88]]);
+      rationale = `${abilityLabel} favors durable trading, so the build leans harder into HP and the stronger defensive lane before topping off offense.`;
+    }
+  } else if (burstAbility && !profile.roleKey.includes('wall')) {
+    if (profile.attackAxis === 'mixed') {
+      if (profile.fast) {
+        setSpread([['spe', 252], [offenseStat, 128], [otherOffenseStat, 128]]);
+      } else {
+        setSpread([[offenseStat, 252], [otherOffenseStat, 128], ['spe', 128]]);
+      }
+      rationale = `${abilityLabel} pushes this set toward immediate pressure, so the EVs keep both attacking stats online instead of padding bulk.`;
+    } else if (profile.fast || profile.roleKey.includes('sweeper') || profile.roleKey.includes('breaker') || (abilitySlug === 'reckless' && Number(moveBundle?.recoilCount || 0) > 0)) {
+      setSpread([[offenseStat, 252], ['spe', 252], ['hp', 4]]);
+      rationale = `${abilityLabel} rewards immediate pressure, so max offense and Speed is the cleanest line.`;
+    } else {
+      setSpread([[offenseStat, 252], ['spe', 180], ['hp', 76]]);
+      rationale = `${abilityLabel} leans this build toward aggressive trading, so the spread keeps meaningful Speed investment instead of overloading on bulk.`;
+    }
   }
 
   return {
@@ -635,7 +764,7 @@ function createBuildGuide(species) {
   const moveBundle = selectBuildMoves(species, profile);
   const abilityChoices = chooseAbility(species, profile, moveBundle);
   const itemChoices = chooseItems(species, profile, moveBundle, abilityChoices.primary);
-  const evBuild = recommendEvSpread(species, profile);
+  const evBuild = recommendEvSpread(species, profile, abilityChoices.primary, moveBundle);
   const ivBuild = recommendIvSpread(species, profile);
   return {
     speciesId: species.id,
@@ -675,7 +804,7 @@ function createBuildGuide(species) {
     moveCount: moveBundle.allMoves.length,
     evolutions: evolutionTargets(species),
     notes: buildGuideNotes(species, profile, nature, abilityChoices.primary, itemChoices, moveBundle),
-    searchText: `${species.id} ${species.name} ${species.slug} ${species.types.join(' ')} ${profile.roleLabel} ${(abilityChoices.primary?.name || '')} ${(itemChoices.primary?.name || '')} ${evBuild.summary} ${ivBuild.summary}`.toLowerCase(),
+    searchText: `${species.id} ${species.name} ${species.slug} ${species.types.join(' ')} ${profile.roleLabel} ${(abilityChoices.primary?.name || '')} ${(itemChoices.primary?.name || '')} ${species.limitedEdition ? `limited ${species.limitedSeries || ''} ${species.limitedBanner || ''}` : ''} ${evBuild.summary} ${ivBuild.summary}`.toLowerCase(),
   };
 }
 
@@ -710,4 +839,12 @@ export function getBuildDexState(selectedReference = '') {
     roleOptions: [...roleMap.values()].sort((left, right) => left.label.localeCompare(right.label)),
   };
 }
+
+
+
+
+
+
+
+
 

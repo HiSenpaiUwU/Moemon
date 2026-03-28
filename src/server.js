@@ -1,4 +1,4 @@
-import http from 'node:http';
+﻿import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import {
   createUser,
   authenticateUser,
   createSession,
+  createSignedDeviceSave,
   destroySession,
   getUserBySessionToken,
   requestPasswordReset,
@@ -83,6 +84,7 @@ import {
   upgradeTrainerSkill,
   resetTrainerSkills,
   claimMissionReward,
+  restoreSignedDeviceSave,
 } from './core.js';
 import { getBuildDexState } from './builddex.js';
 
@@ -110,6 +112,18 @@ async function parseForm(request) {
   };
 }
 
+async function parseJson(request) {
+  const raw = await readBody(request);
+  if (!raw.trim()) {
+    return {};
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error('Invalid JSON payload.');
+  }
+}
+
 function parseCookies(request) {
   const header = request.headers.cookie || '';
   const cookies = {};
@@ -129,11 +143,12 @@ function setCookie(response, name, value, options = {}) {
   parts.push(`SameSite=${options.sameSite || 'Lax'}`);
   if (options.maxAge !== undefined) {
     parts.push(`Max-Age=${options.maxAge}`);
+    parts.push(`Expires=${new Date(Date.now() + options.maxAge * 1000).toUTCString()}`);
   }
   if (options.httpOnly !== false) {
     parts.push('HttpOnly');
   }
-  if (options.secure) {
+  if (options.secure || config.appOrigin.startsWith('https://')) {
     parts.push('Secure');
   }
   const existing = response.getHeader('Set-Cookie');
@@ -352,6 +367,9 @@ function portraitGlyphForSpecies(species, initials) {
   if (SIGNATURE_PORTRAIT_GLYPHS.has(species.id)) {
     return SIGNATURE_PORTRAIT_GLYPHS.get(species.id);
   }
+  if (species.limitedEdition) {
+    return 'LT';
+  }
   if (species.rarity === 'mythic') {
     return 'MY';
   }
@@ -470,50 +488,131 @@ function buildCollectionDashboardData(state) {
   };
 }
 
+function renderCommandMenu(label, items) {
+  const menuSlug = String(label || 'menu').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'menu';
+  return `
+    <details class="command-menu command-menu-${escapeHtml(menuSlug)}" data-command-menu>
+      <summary>
+        <span class="command-menu-label">${escapeHtml(label)}</span>
+        <span class="command-menu-count">${formatNumber(items.length)}</span>
+      </summary>
+      <div class="command-menu-panel">
+        <div class="command-menu-panel-head">
+          <p class="eyebrow">Quick Actions</p>
+          <strong>${escapeHtml(label)} deck</strong>
+          <span>${formatNumber(items.length)} shortcuts ready</span>
+        </div>
+        ${items.map((item) => `
+          <a class="command-link tone-${escapeHtml(item.tone || 'default')}" href="${escapeHtml(item.href)}">
+            <span class="command-link-icon" aria-hidden="true">${escapeHtml(item.glyph || item.label.slice(0, 2).toUpperCase())}</span>
+            <span class="command-link-copy">
+              <span class="command-link-topline">
+                <strong>${escapeHtml(item.label)}</strong>
+                <span class="command-link-tag">${escapeHtml(item.tag || 'Open')}</span>
+              </span>
+              <small>${escapeHtml(item.description)}</small>
+            </span>
+          </a>
+        `).join('')}
+        <div class="command-menu-foot">
+          <span>Tap outside to close</span>
+          <span>Built for quick mobile jumps</span>
+        </div>
+      </div>
+    </details>
+  `;
+}
+
 function layout({ title, user, flash, body, wide = false, world = null }) {
   const worldState = world || getWorldState(user?.id || 0);
   const userSprite = user ? (CONTENT.playerSpriteMap.get(user.meta.avatarSlug) || CONTENT.playerSprites[0]) : null;
-  const navItems = user
-    ? [
-        ['Hub', '/hub'],
-        ['Run', '/play'],
-        ['Storage', '/collection'],
-        ['Trainer Card', '/trainer-card'],
-        ['Market', '/market'],
-        ['Maps', '/maps'],
-        ['Gyms', '/gyms'],
-        ['Mini Games', '/minigames'],
-        ['Social', '/social'],
-        ['News', '/news'],
-        ['Builds', '/builds'],
-        ['Settings', '/settings'],
-        ...(user.role === 'admin' ? [['Admin', '/admin']] : []),
-      ]
-    : [
-        ['Login', '/login'],
-        ['Register', '/register'],
-        ['Reset', '/forgot-password'],
-      ];
-  const navLinks = navItems.map(([label, href]) => `<a href="${href}">${escapeHtml(label)}</a>`).join('');
-  const bottomDock = user
-    ? `
-      <div class="bottom-dock">
-        ${navItems.map(([label, href]) => `<a class="dock-link" href="${href}">${escapeHtml(label)}</a>`).join('')}
-        <form method="post" action="/logout" class="inline-form"><button class="dock-link logout-link" type="submit">Logout</button></form>
+  const activeRun = user ? getRunSnapshot(user.id) : null;
+  const pageSlug = String(title || 'page').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'page';
+  const commandMenus = user ? [
+    renderCommandMenu('Maps', [
+      { label: 'Hub', href: '/hub', description: 'Main command deck, missions, and current activity.', glyph: 'HB', tag: 'Live', tone: 'maps' },
+      { label: 'Maps', href: '/maps', description: 'Route searches, region boards, and world atlas tools.', glyph: 'MP', tag: 'Routes', tone: 'maps' },
+      { label: 'News', href: '/news', description: 'Daily event rotation, spotlights, and notices.', glyph: 'NW', tag: 'Today', tone: 'maps' },
+    ]),
+    renderCommandMenu('Profile', [
+      { label: 'Trainer Card', href: '/trainer-card', description: 'Classes, titles, missions, and overall trainer progress.', glyph: 'TC', tag: 'Stats', tone: 'profile' },
+      { label: 'Settings', href: '/settings', description: 'Theme, controls, HUD, and player preferences.', glyph: 'ST', tag: 'UI', tone: 'profile' },
+      { label: 'Social', href: '/social', description: 'Chat, ladder activity, and arena challenge feeds.', glyph: 'SO', tag: 'Chat', tone: 'profile' },
+    ]),
+    renderCommandMenu('Pokemon', [
+      { label: 'Storage', href: '/collection', description: 'Party setup, summary tools, and box management.', glyph: 'PC', tag: 'Boxes', tone: 'pokemon' },
+      { label: 'Builds', href: '/builds', description: 'Clear species guides with EV, IV, move, and item plans.', glyph: 'EV', tag: 'Guides', tone: 'pokemon' },
+      { label: 'New Run', href: '/play/new', description: 'Start a draft or partner-style route climb.', glyph: 'GO', tag: 'Start', tone: 'pokemon' },
+    ]),
+    renderCommandMenu('Battle', [
+      { label: 'Active Run', href: '/play', description: 'Resume your current wave, battle, or reward step.', glyph: 'AR', tag: 'Resume', tone: 'battle' },
+      { label: 'Gyms', href: '/gyms', description: 'League badge routes and boss-oriented battles.', glyph: 'GY', tag: 'Boss', tone: 'battle' },
+      { label: 'Mini Games', href: '/minigames', description: 'Arcade loops, reward tokens, and side progression.', glyph: 'MG', tag: 'Arcade', tone: 'battle' },
+    ]),
+    renderCommandMenu('Trade', [
+      { label: 'Market', href: '/market', description: 'Permanent stash buys, gear, and account items.', glyph: 'MK', tag: 'Shop', tone: 'trade' },
+      { label: 'Mini Games', href: '/minigames', description: 'Exchange tokens into rare upgrades and cosmetics.', glyph: 'TK', tag: 'Tokens', tone: 'trade' },
+      { label: 'Collection', href: '/collection', description: 'Prep teams and held items before spending resources.', glyph: 'PR', tag: 'Prep', tone: 'trade' },
+    ]),
+    renderCommandMenu('Misc', [
+      { label: 'News', href: '/news', description: 'Keep up with rotating bosses, routes, and world effects.', glyph: 'FX', tag: 'World', tone: 'misc' },
+      { label: 'Settings', href: '/settings', description: 'Tweak the presentation so the game feels easier to parse.', glyph: 'UI', tag: 'Tune', tone: 'misc' },
+      ...(user.role === 'admin'
+        ? [{ label: 'Admin', href: '/admin', description: 'Moderation, grants, and account-side game controls.', glyph: 'AD', tag: 'Tools', tone: 'misc' }]
+        : []),
+    ]),
+  ].join('') : '';
+  const publicLinks = [
+    ['Login', '/login'],
+    ['Register', '/register'],
+    ['Reset', '/forgot-password'],
+  ];
+  const publicNav = publicLinks.map(([label, href]) => `<a href="${href}">${escapeHtml(label)}</a>`).join('');
+  const mobileDock = user ? `
+    <nav class="mobile-command-dock" aria-label="Quick navigation">
+      <a class="mobile-command-link mobile-command-hub" href="/hub">Hub</a>
+      <a class="mobile-command-link mobile-command-profile" href="/trainer-card">Profile</a>
+      <a class="mobile-command-link mobile-command-pokemon" href="/collection">Pokemon</a>
+      <a class="mobile-command-link mobile-command-battle" href="/play">Battle</a>
+      <a class="mobile-command-link mobile-command-trade" href="/market">Trade</a>
+    </nav>
+  ` : '';
+  const deviceSavePayload = user ? createSignedDeviceSave(user.id) : null;
+  const deviceSaveScript = deviceSavePayload ? `
+      <script id="moemon-device-save" type="application/json">${serializeJsonForHtml(deviceSavePayload)}</script>
+  ` : '';
+  const commandStatus = user ? `
+    <div class="command-status panelish">
+      ${renderSpriteAvatar(userSprite, { large: true })}
+      <div class="command-status-copy">
+        <strong>${escapeHtml(user.username)}</strong>
+        <span>${money(user.cash)} saved</span>
+        <span>${escapeHtml(worldState.phaseLabel)} in ${escapeHtml(worldState.activeRegion.name)}</span>
       </div>
-    `
-    : '';
-  const hud = user ? `
-    <div class="floating-hud panelish">
-      <div class="hud-main">
-        ${renderSpriteAvatar(userSprite, { large: true })}
-        <div>
-          <strong>${escapeHtml(user.username)}</strong>
-          <p class="muted">Gold ${money(user.cash)} - ${escapeHtml(worldState.phaseLabel)}</p>
-          <p class="muted">${escapeHtml(worldState.event.label)}</p>
-        </div>
-      </div>
+      <form method="post" action="/logout" class="inline-form">
+        <button class="button danger command-logout" type="submit">Logout</button>
+      </form>
     </div>
+  ` : '';
+  const mobileQuickTray = user ? `
+    <section class="mobile-quick-tray" aria-label="Fast mobile actions">
+      <a class="mobile-quick-card tone-battle" href="${activeRun ? '/play' : '/play/new'}">
+        <strong>${activeRun ? 'Resume Run' : 'Start Run'}</strong>
+        <small>${activeRun ? 'Jump back into your current wave and reward chain.' : 'Open the run board and launch a fresh climb.'}</small>
+      </a>
+      <a class="mobile-quick-card tone-pokemon" href="/play/new?draft=partner-party-style">
+        <strong>Partner Style</strong>
+        <small>Launch the saved partner and party-slot squad in one tap.</small>
+      </a>
+      <a class="mobile-quick-card tone-trade" href="/minigames">
+        <strong>Arcade</strong>
+        <small>Prize wheel, aura jackpot, and token farming loops.</small>
+      </a>
+      <a class="mobile-quick-card tone-maps" href="/news">
+        <strong>Daily Pulse</strong>
+        <small>See route rotations, events, and live spotlights fast.</small>
+      </a>
+    </section>
   ` : '';
   return `<!doctype html>
   <html lang="en">
@@ -524,30 +623,35 @@ function layout({ title, user, flash, body, wide = false, world = null }) {
       <link rel="stylesheet" href="/public/styles.css" />
       <script src="/public/app.js" defer></script>
     </head>
-    <body class="phase-${escapeHtml(worldState.phase)} hud-${escapeHtml(user?.meta?.hudMode || 'cozy')} motion-${escapeHtml(user?.meta?.motionMode || 'full')} theme-${escapeHtml(user?.meta?.displayTheme || 'pokemon')} color-${escapeHtml(user?.meta?.colorMode || 'dark')} font-${escapeHtml(user?.meta?.fontMode || 'pixel')}">
-      ${hud}
+    <body class="phase-${escapeHtml(worldState.phase)} hud-${escapeHtml(user?.meta?.hudMode || 'cozy')} motion-${escapeHtml(user?.meta?.motionMode || 'full')} theme-${escapeHtml(user?.meta?.displayTheme || 'pokemon')} color-${escapeHtml(user?.meta?.colorMode || 'dark')} font-${escapeHtml(user?.meta?.fontMode || 'pixel')} page-${escapeHtml(pageSlug)} ${user ? 'signed-in-shell' : 'signed-out-shell'}">
       <div class="page-shell ${wide ? 'wide' : ''}">
-        <header class="topbar">
-          <div>
+        <header class="topbar ${user ? 'topbar-command' : 'topbar-public'}">
+          <div class="topbar-brand">
             <a class="brand" href="${user ? '/hub' : '/'}">Moemon Arena</a>
             <p class="brand-sub">${escapeHtml(worldState.phaseLabel)} over ${escapeHtml(worldState.activeRegion.name)}. ${escapeHtml(worldState.event.effect)}</p>
           </div>
-          <nav class="topnav">${navLinks}</nav>
+          ${user ? commandStatus : `<nav class="topnav auth-topnav">${publicNav}</nav>`}
+          ${user ? `<nav class="topnav command-bar" aria-label="Primary command bar">${commandMenus}</nav>` : ''}
+          ${mobileQuickTray}
         </header>
         <section class="world-marquee panelish">
-          <div>
-            <strong>${escapeHtml(worldState.event.label)}</strong>
-            <p class="muted">Daily boss: ${escapeHtml(worldState.dailyBoss?.name || 'Astravault Omega')} - Market rotation resets in ${escapeHtml(formatTimerMinutes(worldState.marketRotation.minutesRemaining))}</p>
-          </div>
-          <div class="badge-row">
-            ${badge(worldState.phaseLabel, worldState.phase === 'night' ? 'ghost' : worldState.phase === 'dawn' || worldState.phase === 'dusk' ? 'warning' : 'success')}
-            ${badge(worldState.activeRegion.name, 'default')}
+          <p class="world-marquee-ribbon">Live event relay: ${escapeHtml(worldState.event.label)}</p>
+          <div class="world-marquee-main">
+            <div>
+              <strong>${escapeHtml(worldState.event.label)}</strong>
+              <p class="muted">Daily boss: ${escapeHtml(worldState.dailyBoss?.name || 'Astravault Omega')} - Market rotation resets in ${escapeHtml(formatTimerMinutes(worldState.marketRotation.minutesRemaining))}</p>
+            </div>
+            <div class="badge-row">
+              ${badge(worldState.phaseLabel, worldState.phase === 'night' ? 'ghost' : worldState.phase === 'dawn' || worldState.phase === 'dusk' ? 'warning' : 'success')}
+              ${badge(worldState.activeRegion.name, 'default')}
+            </div>
           </div>
         </section>
         ${flash ? `<div class="flash flash-${escapeHtml(flash.level || 'info')}">${escapeHtml(flash.message)}</div>` : ''}
         <main>${body}</main>
       </div>
-      ${bottomDock}
+      ${mobileDock}
+      ${deviceSaveScript}
     </body>
   </html>`;
 }
@@ -558,6 +662,7 @@ function authCard(title, intro, fields, footer = '') {
       <h1>${escapeHtml(title)}</h1>
       <p class="muted">${escapeHtml(intro)}</p>
       ${fields}
+      <div class="device-restore-slot" data-device-restore-slot hidden></div>
       ${footer}
     </section>
   `;
@@ -667,6 +772,7 @@ function renderProfileHeader(state) {
   const user = state.user;
   const trainer = trainerSnapshot(state);
   const progression = state.progression || { profile: { level: 1, expIntoLevel: 0, expForNextLevel: 1 }, progressPercent: 0, selectedTitle: { name: 'Rookie Tamer' }, activeClass: { name: 'Collector' }, winRate: 0, totalRuns: 0 };
+  const userSprite = CONTENT.playerSpriteMap.get(user.meta.avatarSlug) || CONTENT.playerSprites[0];
   const modes = user.meta.unlockedModes.map((mode) => badge(mode)).join(' ');
   const gymWins = user.meta.gymWins || {};
   const badgeLeagues = CONTENT.gymLeagues.map((league) => ({
@@ -689,27 +795,51 @@ function renderProfileHeader(state) {
     </article>
   `).join('');
   const achievementBadges = trainer.achievements.map((entry) => badge(entry.label, entry.unlocked ? 'success' : 'default')).join(' ');
+  const shortcutLinks = [
+    { label: 'Trainer Card', href: '/trainer-card', summary: 'Classes, titles, missions, and overall trainer progression.' },
+    { label: 'Storage', href: '/collection', summary: 'Party slots, PC boxes, summary tools, and move changes.' },
+    { label: 'Maps', href: '/maps', summary: 'Route searches, live world boards, and encounter chains.' },
+    { label: 'Builds', href: '/builds', summary: 'Species builds with clearer EV, IV, and move guidance.' },
+    { label: 'Settings', href: '/settings', summary: 'Tune the HUD, motion, colors, and layout readability.' },
+    { label: 'Social', href: '/social', summary: 'Chat boards, online activity, and challenge traffic.' },
+  ].map((entry) => `
+    <a class="profile-shortcut-link" href="${escapeHtml(entry.href)}">
+      <strong>${escapeHtml(entry.label)}</strong>
+      <span>${escapeHtml(entry.summary)}</span>
+    </a>
+  `).join('');
   return `
     <section class="panel profile-panel stack">
-      <div class="profile-main-row">
-        <div>
-          <p class="eyebrow">Commander profile</p>
-          <h1>${escapeHtml(user.username)}</h1>
-          <p class="muted">${escapeHtml(user.email)} - ${escapeHtml(user.role)}</p>
-          <div class="badge-row">${modes} ${badge(`${trainer.favoriteType} trainer`, 'default')} ${badge(progression.selectedTitle?.name || 'Rookie Tamer', 'warning')} ${badge(progression.activeClass?.name || 'Collector', 'success')}</div>
+      <div class="grid-two profile-command-grid">
+        <article class="panelish profile-identity-card">
+          <div class="profile-identity-head">
+            ${renderSpriteAvatar(userSprite, { large: true })}
+            <div>
+              <p class="eyebrow">Commander profile</p>
+              <h1>${escapeHtml(user.username)}</h1>
+              <p class="muted">${escapeHtml(user.email)} - ${escapeHtml(user.role)}</p>
+            </div>
+          </div>
+          <div class="badge-row compact-row">${modes} ${badge(`${trainer.favoriteType} trainer`, 'default')} ${badge(progression.selectedTitle?.name || 'Rookie Tamer', 'warning')} ${badge(progression.activeClass?.name || 'Collector', 'success')}</div>
           ${renderProgressMeter(progression.progressPercent || 0, `${formatNumber(progression.profile?.expIntoLevel || 0)} / ${formatNumber(progression.profile?.expForNextLevel || 1)} EXP to next level`)}
           <p class="muted gap-top">Trainer level ${formatNumber(progression.profile?.level || 1)} - ${formatNumber(progression.winRate || 0)}% win rate across ${formatNumber(progression.totalRuns || 0)} runs.</p>
-        </div>
-        <div class="profile-economy">
-          <div class="stat-card"><strong>${money(user.cash)}</strong><span>account cash</span></div>
-          <div class="stat-card"><strong>${formatNumber(trainer.caughtCount)}</strong><span>pokemon caught</span></div>
-          <div class="stat-card"><strong>${formatNumber(trainer.battleWins)}</strong><span>battles won</span></div>
-          <div class="stat-card"><strong>Lv ${formatNumber(progression.profile?.level || 1)}</strong><span>trainer level</span></div>
-        </div>
+        </article>
+        <article class="panelish profile-shortcuts-card">
+          <p class="eyebrow">Quick access</p>
+          <h2>Command shortcuts</h2>
+          <p class="muted">The profile board now doubles as a cleaner command menu so the important parts of the game are easier to find without hunting through dense pages.</p>
+          <div class="profile-shortcut-grid">${shortcutLinks}</div>
+        </article>
+      </div>
+      <div class="profile-economy">
+        <div class="stat-card"><strong>${money(user.cash)}</strong><span>account cash</span></div>
+        <div class="stat-card"><strong>${formatNumber(trainer.caughtCount)}</strong><span>pokemon caught</span></div>
+        <div class="stat-card"><strong>${formatNumber(trainer.battleWins)}</strong><span>battles won</span></div>
+        <div class="stat-card"><strong>Lv ${formatNumber(progression.profile?.level || 1)}</strong><span>trainer level</span></div>
       </div>
       <div class="grid-two">
         <article class="panelish">
-          <p class="eyebrow">Trainer Card</p>
+          <p class="eyebrow">Trainer card</p>
           <h2>Seen vs. caught</h2>
           <div class="badge-row compact-row">
             ${badge(`${formatNumber(trainer.seenCount)} seen`, trainer.seenCount ? 'default' : 'warning')}
@@ -717,22 +847,22 @@ function renderProfileHeader(state) {
             ${badge(`${formatNumber(trainer.favoriteCount)} favorites`, trainer.favoriteCount ? 'warning' : 'default')}
             ${badge(`${formatNumber(totalBadges)} badges`, totalBadges ? 'warning' : 'default')}
           </div>
-          <p class="muted gap-top">Your commander board now tracks roster growth, battle wins, and dream-team progress alongside the older run stats.</p>
+          <p class="muted gap-top">Roster growth, run history, and long-term trainer identity live together here now, so the board reads more like a useful profile and less like a stat dump.</p>
           <div class="badge-row compact-row gap-top">${achievementBadges}</div>
         </article>
         <article class="panelish">
-          <p class="eyebrow">League Progress</p>
+          <p class="eyebrow">League progress</p>
           <h2>Badge overview</h2>
-          <p class="muted">Keep an eye on every league while you build teams for routes, gyms, and arena scrims.</p>
+          <p class="muted">Keep every league visible from the hub while you prepare teams for routes, gyms, arena scrims, and late-game rebuilds.</p>
           <div class="badge-row compact-row gap-top">${badge(`${formatNumber(totalBadges)} collected`, totalBadges ? 'warning' : 'default')}</div>
         </article>
       </div>
       <div class="badge-collector">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Badge Collector</p>
-            <h2>League Progress</h2>
-            <p class="muted">Check every badge you already own without leaving your profile board.</p>
+            <p class="eyebrow">Badge collector</p>
+            <h2>League progress</h2>
+            <p class="muted">Check every badge you already own without leaving the hub command board.</p>
           </div>
           ${badge(`${formatNumber(totalBadges)} collected`, totalBadges ? 'warning' : 'default')}
         </div>
@@ -776,6 +906,34 @@ function renderWorldBoard(world) {
 
 function renderMaps(state) {
   const searchBoard = state.searchBoard || null;
+  const regionGroupMeta = [
+    { slug: 'sanctuary', title: 'Sanctuary Fields', summary: 'Wish gardens, lakes, and mythic refuge routes.' },
+    { slug: 'ruins', title: 'Ancient Ruins', summary: 'Temples, palaces, and relic-heavy legendary boards.' },
+    { slug: 'peak', title: 'Peaks & Towers', summary: 'Mountain climbs, towers, and sky pressure routes.' },
+    { slug: 'depths', title: 'Depths & Caverns', summary: 'Harder cave boards with heavier enemy scaling.' },
+    { slug: 'island', title: 'Island Routes', summary: 'Remote island circuits with low-RNG drops and rarer sightings.' },
+  ];
+  const selectedRegion = state.regions.find((region) => region.selected) || state.regions.find((region) => region.unlocked) || state.regions[0] || null;
+  const renderRegionActions = (region, options = {}) => {
+    if (!region) {
+      return '';
+    }
+    return `
+      <div class="action-strip gap-top ${options.compact ? 'compact-row' : ''}">
+        <form method="post" action="/maps/select" class="inline-form">
+          <input type="hidden" name="regionSlug" value="${escapeHtml(region.slug)}" />
+          <button class="button ghost" type="submit" ${region.unlocked ? '' : 'disabled'}>${region.selected ? 'Selected' : 'Set Active'}</button>
+        </form>
+        ${region.adventureModes.map((mode) => `
+          <form method="post" action="/maps/adventure" class="inline-form">
+            <input type="hidden" name="regionSlug" value="${escapeHtml(region.slug)}" />
+            <input type="hidden" name="adventureMode" value="${escapeHtml(mode.slug)}" />
+            <button class="button ${mode.slug === 'wild' ? 'accent' : mode.slug === 'boss' ? 'primary' : 'ghost'}" type="submit" ${mode.available ? '' : 'disabled'}>${escapeHtml(mode.label)}</button>
+          </form>
+        `).join('')}
+      </div>
+    `;
+  };
   const featuredSightings = (searchBoard?.featuredSightings || []).map((species) => `
     <article class="panelish map-search-sighting">
       ${renderMonsterPortrait(CONTENT.speciesMap.get(species.id) || species, { small: true, caption: `${titleLabel(species.rarity)} signal` })}
@@ -821,29 +979,10 @@ function renderMaps(state) {
         ${badge(`${formatNumber(region.rareMeter || 0)}% rare`, 'warning')}
       </div>
       <p class="muted">${region.unlocked ? `${escapeHtml(region.npcTitle)} roam this zone and routes scale around Lv ${formatNumber(region.routeLevel)}.` : `Unlocks around wave ${formatNumber(region.unlockWave)}.`}</p>
-      <div class="action-strip gap-top">
-        <form method="post" action="/maps/select" class="inline-form">
-          <input type="hidden" name="regionSlug" value="${escapeHtml(region.slug)}" />
-          <button class="button ghost" type="submit" ${region.unlocked ? '' : 'disabled'}>${region.selected ? 'Selected' : 'Set Active'}</button>
-        </form>
-        ${region.adventureModes.map((mode) => `
-          <form method="post" action="/maps/adventure" class="inline-form">
-            <input type="hidden" name="regionSlug" value="${escapeHtml(region.slug)}" />
-            <input type="hidden" name="adventureMode" value="${escapeHtml(mode.slug)}" />
-            <button class="button ${mode.slug === 'wild' ? 'accent' : mode.slug === 'boss' ? 'primary' : 'ghost'}" type="submit" ${mode.available ? '' : 'disabled'}>${escapeHtml(mode.label)}</button>
-          </form>
-        `).join('')}
-      </div>
+      ${renderRegionActions(region)}
     </article>
   `;
   const regionCards = state.regions.map((region) => renderRegionCard(region)).join('');
-  const regionGroupMeta = [
-    { slug: 'sanctuary', title: 'Sanctuary Fields', summary: 'Wish gardens, lakes, and mythic refuge routes.' },
-    { slug: 'ruins', title: 'Ancient Ruins', summary: 'Temples, palaces, and relic-heavy legendary boards.' },
-    { slug: 'peak', title: 'Peaks & Towers', summary: 'Mountain climbs, towers, and sky pressure routes.' },
-    { slug: 'depths', title: 'Depths & Caverns', summary: 'Harder cave boards with heavier enemy scaling.' },
-    { slug: 'island', title: 'Island Routes', summary: 'Remote island circuits with low-RNG drops and rarer sightings.' },
-  ];
   const groupedRegionCards = regionGroupMeta.map((group) => {
     const groupRegions = state.regions.filter((region) => region.category === group.slug);
     if (!groupRegions.length) {
@@ -862,13 +1001,32 @@ function renderMaps(state) {
       </article>
     `;
   }).join('');
+  const atlasTiles = regionGroupMeta.map((group) => {
+    const groupRegions = state.regions.filter((region) => region.category === group.slug);
+    if (!groupRegions.length) {
+      return '';
+    }
+    const unlockedCount = groupRegions.filter((region) => region.unlocked).length;
+    const selected = groupRegions.some((region) => region.selected);
+    return `
+      <article class="map-atlas-tile ${selected ? 'is-active' : ''}">
+        <strong>${escapeHtml(group.title)}</strong>
+        <span>${formatNumber(groupRegions.length)} areas</span>
+        <small>${escapeHtml(group.summary)}</small>
+        <div class="badge-row compact-row">
+          ${badge(`${formatNumber(unlockedCount)} unlocked`, unlockedCount ? 'success' : 'default')}
+          ${badge(selected ? 'Active route inside' : 'Standby', selected ? 'warning' : 'default')}
+        </div>
+      </article>
+    `;
+  }).join('');
   return `
-    <section class="panel">
-      <div class="section-head">
+    <section class="panel map-page-shell">
+      <div class="section-head map-page-head">
         <div>
-          <p class="eyebrow">Adventure Board</p>
+          <p class="eyebrow">Adventure board</p>
           <h1>Maps</h1>
-          <p class="muted">Searches now run as mini adventures with route mood, fake-outs, item finds, EXP rewards, chain scaling, and live rare buildup.</p>
+          <p class="muted">The map flow is reorganized into a clearer route console, atlas panel, search board, and archive so it feels closer to an actual browser RPG board instead of a stack of generic cards.</p>
         </div>
         <div class="badge-row">
           ${badge(state.world.phaseLabel, state.world.phase === 'night' ? 'ghost' : 'warning')}
@@ -876,13 +1034,47 @@ function renderMaps(state) {
           ${badge(state.world.event.label, 'default')}
         </div>
       </div>
+      <section class="grid-two map-command-grid">
+        <article class="panelish map-command-card">
+          <p class="eyebrow">Route console</p>
+          <h2>${escapeHtml(selectedRegion?.name || state.world.activeRegion.name)}</h2>
+          <p class="muted">${escapeHtml(selectedRegion?.flavor || state.world.activeRegion.flavor || 'Set an active region to start planning searches.')}</p>
+          <div class="badge-row compact-row">
+            ${(selectedRegion?.preferredTypes || []).map((type) => badge(type, type)).join(' ')}
+            ${selectedRegion ? badge(selectedRegion.weatherNow || 'clear', selectedRegion.weatherNow === 'rain' ? 'water' : selectedRegion.weatherNow === 'fog' ? 'ghost' : 'success') : ''}
+            ${selectedRegion ? badge(`${formatNumber(selectedRegion.rareMeter || 0)}% rare`, 'warning') : ''}
+            ${selectedRegion ? badge(`Chain x${formatNumber(selectedRegion.chain || 0)}`, selectedRegion.chain ? 'success' : 'default') : ''}
+          </div>
+          <div class="summary-facts gap-top">
+            <p><strong>Route level:</strong> ${formatNumber(selectedRegion?.routeLevel || 0)} &middot; ${escapeHtml(selectedRegion?.searchMood || 'Adventure Route')}</p>
+            <p><strong>Route guide:</strong> ${escapeHtml(selectedRegion?.npcTitle || 'Scouts are rotating in')}</p>
+            <p><strong>Status:</strong> ${selectedRegion?.unlocked ? 'Unlocked and playable now.' : `Unlocks around wave ${formatNumber(selectedRegion?.unlockWave || 0)}.`}</p>
+          </div>
+          ${selectedRegion ? renderRegionActions(selectedRegion) : ''}
+          <div class="button-row gap-top">
+            ${searchBoard ? '<a class="button accent" href="#map-search-console">Open search console</a>' : '<a class="button accent" href="#adventure-routes">Jump to route list</a>'}
+            <a class="button ghost" href="#route-archive">Browse route archive</a>
+          </div>
+        </article>
+        <article class="panelish map-atlas-card">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Atlas board</p>
+              <h2>Region categories</h2>
+              <p class="muted">These grouped tiles make the world easier to scan before you dive into the full archive below.</p>
+            </div>
+            ${badge(`${formatNumber(state.regions.filter((region) => region.unlocked).length)} unlocked`, 'success')}
+          </div>
+          <div class="map-atlas-grid">${atlasTiles}</div>
+        </article>
+      </section>
       ${renderWorldBoard(state.world)}
       ${searchBoard ? `
-        <section class="grid-two summary-grid gap-top">
+        <section class="grid-two summary-grid gap-top" id="map-search-console">
           <article class="panelish map-search-board">
             <div class="section-head">
               <div>
-                <p class="eyebrow">Adventure Search</p>
+                <p class="eyebrow">Adventure search</p>
                 <h2>${escapeHtml(searchBoard.regionName)} Route</h2>
                 <p class="muted">Every search now resolves into a real route event: encounter, clue, item, trainer EXP, or credits.</p>
               </div>
@@ -898,7 +1090,7 @@ function renderMaps(state) {
               <article class="panelish map-search-story-card" data-search-story ${searchBoard.storyFresh ? 'data-search-story-fresh="true"' : ''}>
                 <div class="section-head">
                   <div>
-                    <h3>Mini Story Every Search</h3>
+                    <h3>Mini story every search</h3>
                     <p class="muted">The route now plays out in beats before the final result lands.</p>
                   </div>
                   ${badge(searchBoard.lastRewardLabel || 'Route sweep', searchBoard.lastRewardTone || 'default')}
@@ -908,7 +1100,7 @@ function renderMaps(state) {
               <article class="panelish map-search-log-card">
                 <div class="section-head">
                   <div>
-                    <h3>Adventure Log</h3>
+                    <h3>Adventure log</h3>
                     <p class="muted">Chains, clues, items, and fake-outs are saved here so the route feels alive.</p>
                   </div>
                   ${badge(searchBoard.rareMeterLabel || '0% rare signal', 'warning')}
@@ -954,8 +1146,8 @@ function renderMaps(state) {
           <article class="panelish map-radio-board">
             <div class="section-head">
               <div>
-                <p class="eyebrow">Route Radio</p>
-                <h2>Latest Activity and Chat</h2>
+                <p class="eyebrow">Route radio</p>
+                <h2>Latest activity and chat</h2>
                 <p class="muted">The route board now shares live activity with world chat so maps feel connected to the rest of the game.</p>
               </div>
               <div class="badge-row compact-row">
@@ -968,12 +1160,12 @@ function renderMaps(state) {
           </article>
         </section>
       ` : ''}
-      <section class="panel gap-top">
+      <section class="panel gap-top" id="route-archive">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Region Archive</p>
-            <h2>Categorized Legendary Areas</h2>
-            <p class="muted">Every area now carries its own search mood, chain state, and rare signal so the world feels less repetitive.</p>
+            <p class="eyebrow">Region archive</p>
+            <h2>Categorized legendary areas</h2>
+            <p class="muted">Every area carries its own search mood, chain state, and rare signal so the world feels less repetitive and easier to browse.</p>
           </div>
           <div class="badge-row compact-row">
             ${badge(`${formatNumber(state.regions.length)} total areas`, 'default')}
@@ -982,8 +1174,8 @@ function renderMaps(state) {
         </div>
         ${groupedRegionCards}
       </section>
-      <section class="market-section">
-        <h2>Adventure Routes</h2>
+      <section class="market-section" id="adventure-routes">
+        <h2>Adventure routes</h2>
         <div class="region-grid map-region-grid">${regionCards}</div>
       </section>
     </section>
@@ -1889,7 +2081,7 @@ function renderHub(state) {
     </div>
   `;
 }
-function renderRunSetup(state) {
+function renderRunSetup(state, preferredDraftSlug = '') {
   const activeRunNote = state.activeRun ? '<p class="flash flash-warning">Starting a new run will abandon your current active run.</p>' : '';
   const starterDrafts = state.starterDrafts || [];
   const savedRunEntries = [];
@@ -1930,11 +2122,18 @@ function renderRunSetup(state) {
   if (!runStyles.some((style) => style.draft.slug === savedRosterPack.slug)) {
     runStyles.push({ kind: 'saved-squad', draft: savedRosterPack });
   }
+  const selectedDraftSlug = (
+    runStyles.find((style) => style.draft.slug === preferredDraftSlug && (style.kind !== 'saved-squad' || style.draft.entries.length))
+    || runStyles.find((style) => style.kind !== 'saved-squad' || style.draft.entries.length)
+    || runStyles[0]
+  )?.draft.slug || '';
+  const partnerReady = savedRosterPack.entries.length > 0;
   const draftCards = runStyles.map((style, index) => {
     const draft = style.draft;
     const isSavedSquad = style.kind === 'saved-squad';
     const tone = draft.rarity === 'legendary' ? 'warning' : draft.rarity === 'rare' ? 'psychic' : 'success';
     const disabled = isSavedSquad && !draft.entries.length;
+    const isSelected = draft.slug === selectedDraftSlug;
     const compactBadges = isSavedSquad
       ? [
           badge(draft.entries.length ? `${formatNumber(draft.entries.length)} saved` : 'No saved squad', draft.entries.length ? 'success' : 'default'),
@@ -1942,8 +2141,8 @@ function renderRunSetup(state) {
         ].join(' ')
       : draft.starters.map((starter) => badge(starter.species.name, 'default')).join(' ');
     return `
-      <label class="draft-card ${index === 0 ? 'is-active' : ''} ${disabled ? 'is-disabled' : ''}">
-        <input type="radio" name="draftSlug" value="${draft.slug}" ${index === 0 ? 'checked' : ''} ${disabled ? 'disabled' : ''} data-draft-radio />
+      <label class="draft-card ${isSelected ? 'is-active' : ''} ${disabled ? 'is-disabled' : ''}">
+        <input type="radio" name="draftSlug" value="${draft.slug}" ${isSelected ? 'checked' : ''} ${disabled ? 'disabled' : ''} data-draft-radio />
         <div class="card-top">
           <h3>${escapeHtml(draft.name)}</h3>
           ${badge(isSavedSquad ? 'saved squad' : draft.rarity, tone)}
@@ -1977,7 +2176,7 @@ function renderRunSetup(state) {
         `;
       }).join('');
       return `
-        <section class="starter-draft-panel ${draftIndex === 0 ? 'is-active' : ''}" data-draft-panel="${draft.slug}">
+        <section class="starter-draft-panel ${draft.slug === selectedDraftSlug ? 'is-active' : ''}" data-draft-panel="${draft.slug}">
           <div class="section-head">
             <div>
               <p class="eyebrow">Saved Squad</p>
@@ -2002,7 +2201,7 @@ function renderRunSetup(state) {
       const entry = starter.entry;
       const species = starter.species;
       const perk = starter.perk;
-      const checked = draftIndex === 0 && starterIndex === 0 ? 'checked' : '';
+      const checked = draft.slug === selectedDraftSlug && starterIndex === 0 ? 'checked' : '';
       return `
         <label class="monster-card selectable starter-choice-card ${entry ? '' : 'is-disabled'}">
           <input type="radio" name="starter" value="${entry?.id || ''}" ${checked} ${entry ? '' : 'disabled'} />
@@ -2023,7 +2222,7 @@ function renderRunSetup(state) {
       `;
     }).join('');
     return `
-      <section class="starter-draft-panel ${draftIndex === 0 ? 'is-active' : ''}" data-draft-panel="${draft.slug}">
+      <section class="starter-draft-panel ${draft.slug === selectedDraftSlug ? 'is-active' : ''}" data-draft-panel="${draft.slug}">
         <div class="section-head">
           <div>
             <p class="eyebrow">Starter Draft</p>
@@ -2036,12 +2235,32 @@ function renderRunSetup(state) {
       </section>
     `;
   }).join('');
+  const partnerFocusCard = `
+    <section class="panelish run-setup-spotlight">
+      <div>
+        <p class="eyebrow">Quick Launch</p>
+        <h2>${partnerReady ? 'Partner Style is ready' : 'Build a Partner Style squad'}</h2>
+        <p class="muted">${partnerReady ? `Launch straight from your saved partner and party slots with ${formatNumber(savedRosterPack.entries.length)} ready monster${savedRosterPack.entries.length === 1 ? '' : 's'}.` : 'Set a visible partner or save party-slot monsters first, then this lane becomes a one-tap launch.'}</p>
+      </div>
+      <div class="badge-row compact-row">
+        ${badge(partnerReady ? `${formatNumber(savedRosterPack.entries.length)} saved` : 'No saved squad', partnerReady ? 'success' : 'default')}
+        ${state.identity?.partner ? badge(monsterLabel(state.identity.partner.monster), 'warning') : badge('No visible partner', 'default')}
+        ${badge('Arcade rewards live', 'psychic')}
+      </div>
+      <div class="button-row">
+        <a class="button ${partnerReady ? 'accent' : 'ghost'}" href="${partnerReady ? '/play/new?draft=partner-party-style' : '/collection'}">${partnerReady ? 'Open Partner Style' : 'Set Partner Squad'}</a>
+        <a class="button ghost" href="/collection">${partnerReady ? 'Tune Saved Squad' : 'Open Collection'}</a>
+        <a class="button ghost" href="/minigames">Arcade Break</a>
+      </div>
+    </section>
+  `;
   const challengeOptions = CONTENT.challenges.map((challenge) => `<option value="${challenge.slug}">${escapeHtml(challenge.name)} - ${escapeHtml(challenge.description)}</option>`).join('');
   return `
     <section class="panel">
       <h1>Start a Run</h1>
       <p class="muted">Each run can start from a curated starter draft or from your saved partner / party squad. Pick a launch style, lock the setup, then start climbing.</p>
       ${activeRunNote}
+      ${partnerFocusCard}
       <form method="post" action="/play/new" class="stack-form">
         <div class="grid-three mode-grid">
           <label class="mode-card"><input type="radio" name="mode" value="classic" checked /><strong>Classic</strong><span>30 waves, bosses every 10.</span></label>
@@ -2562,6 +2781,160 @@ function renderRunSummaryScreen(summary, user) {
   `;
 }
 
+function battleMonsterStateBadges(monster, options = {}) {
+  return [
+    options.active ? badge('Active', 'success') : '',
+    monster.status?.type ? badge(titleLabel(monster.status.type), 'warning') : '',
+    monster.megaEvolved ? badge('Mega', 'success') : '',
+    monster.ultraBurst ? badge('Ultra', 'warning') : '',
+    monster.dynamaxed ? badge('Dynamax', 'warning') : '',
+    monster.variantShift ? badge('Variant', 'psychic') : '',
+  ].filter(Boolean).join(' ');
+}
+
+function renderBattleFaceoffPanel(monster, options = {}) {
+  const species = CONTENT.speciesMap.get(monster.speciesId);
+  if (!species) {
+    return '';
+  }
+  const side = options.side === 'enemy' ? 'enemy' : 'player';
+  const hpPercent = Math.max(0, Math.round((monster.currentHp / Math.max(1, monster.stats.hp)) * 100));
+  const ability = abilityInfo(monster);
+  const heldItem = heldItemInfo(monster);
+  const aura = auraInfo(monster);
+  const nature = natureInfo(monster);
+  const identityBadges = `${species.types.map((type) => badge(titleLabel(type), type)).join(' ')} ${battleMonsterStateBadges(monster, { active: options.active })}`.trim();
+  return `
+    <article class="battle-active-panel battle-active-panel-${side}">
+      <div class="battle-active-head">
+        <div>
+          <p class="eyebrow">${escapeHtml(options.label || (side === 'enemy' ? 'Opponent active' : 'Your active monster'))}</p>
+          <h2>${escapeHtml(battleMonsterName(monster))}</h2>
+        </div>
+        <div class="battle-active-vitals">
+          <strong>Lv ${formatNumber(monster.level)}</strong>
+          <span>HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
+        </div>
+      </div>
+      <div class="battle-active-body">
+        <div class="battle-active-art battle-active-art-${side}">
+          ${renderMonsterPortrait(species, { caption: species.types.map((type) => titleLabel(type)).join(' / ') })}
+        </div>
+        <div class="battle-active-copy">
+          <div class="badge-row compact-row">${identityBadges}</div>
+          <div class="health hp-bar battle-active-health"><span style="width:${hpPercent}%"></span></div>
+          <p class="battle-active-note">${escapeHtml(ability?.name || 'Battle Aura')} ï¿½ ${escapeHtml(heldItem?.name || 'No held item')}</p>
+          <p class="battle-active-note">${escapeHtml(aura?.name || 'Standard aura')} ï¿½ ${escapeHtml(nature?.name || 'Neutral nature')}</p>
+          <div class="battle-active-stats">
+            <span>Atk ${formatNumber(monster.stats.atk)}</span>
+            <span>Def ${formatNumber(monster.stats.def)}</span>
+            <span>SpA ${formatNumber(monster.stats.spa)}</span>
+            <span>SpD ${formatNumber(monster.stats.spd)}</span>
+            <span>Spe ${formatNumber(monster.stats.spe)}</span>
+            <span>Total ${formatNumber(statTotal(monster.stats))}</span>
+          </div>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderBattleMoveTile(moveState, options = {}) {
+  const move = CONTENT.moveMap.get(moveState.id);
+  if (!move) {
+    return '';
+  }
+  const palette = paletteForType(move.type);
+  const title = moveState.displayName || move.name;
+  const description = moveState.displayDescription || move.description;
+  const powerLabel = move.category === 'status' ? 'Status' : `Power ${formatNumber(move.power)}`;
+  const tileShell = `
+    <div class="battle-move-tile-shell palette-${escapeHtml(palette)}">
+      <div class="battle-move-tile-top">
+        <div>
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(description)}</span>
+        </div>
+        <span class="battle-move-type-badge">${escapeHtml(titleLabel(move.type))}</span>
+      </div>
+      <div class="battle-move-tile-meta">
+        <span>${escapeHtml(titleLabel(move.category))}</span>
+        <span>${escapeHtml(powerLabel)}</span>
+        <span>Acc ${formatNumber(move.accuracy)}</span>
+        <span>PP ${formatNumber(moveState.pp)}/${formatNumber(moveState.maxPp)}</span>
+      </div>
+    </div>
+  `;
+  if (options.readonly) {
+    return `<article class="battle-move-tile battle-move-tile-readonly">${tileShell}</article>`;
+  }
+  return `
+    <article class="battle-move-tile ${options.zReady ? 'z-ready' : ''}">
+      ${tileShell}
+      <div class="battle-move-actions">
+        <form method="post" action="/play/action" class="battle-move-form">
+          <input type="hidden" name="action" value="move" />
+          <input type="hidden" name="moveIndex" value="${options.moveIndex}" />
+          <button class="button ${move.category === 'status' ? 'ghost' : 'primary'} battle-move-submit" type="submit">Use Move</button>
+        </form>
+        ${options.zReady ? `
+          <form method="post" action="/play/action" class="battle-move-form">
+            <input type="hidden" name="action" value="move" />
+            <input type="hidden" name="moveIndex" value="${options.moveIndex}" />
+            <input type="hidden" name="battleMode" value="z" />
+            <button class="button accent battle-move-submit" type="submit">Z-Move</button>
+          </form>
+        ` : ''}
+      </div>
+    </article>
+  `;
+}
+
+function renderBattleRosterCard(monster, options = {}) {
+  const species = CONTENT.speciesMap.get(monster.speciesId);
+  if (!species) {
+    return '';
+  }
+  const hpPercent = Math.max(0, Math.round((monster.currentHp / Math.max(1, monster.stats.hp)) * 100));
+  const stateLabel = options.active ? 'Active' : monster.currentHp <= 0 ? 'KO' : options.side === 'enemy' ? 'Seen' : 'Ready';
+  return `
+    <article class="battle-roster-card ${options.active ? 'is-active' : ''} ${monster.currentHp <= 0 ? 'is-fainted' : ''}">
+      <div class="battle-roster-icon palette-${escapeHtml(paletteForType(species.types?.[0]))}">${escapeHtml((monster.nickname || monster.name).slice(0, 2).toUpperCase())}</div>
+      <div class="battle-roster-copy">
+        <strong>${escapeHtml(battleMonsterName(monster))}</strong>
+        <span>Lv ${formatNumber(monster.level)} ï¿½ HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
+        <div class="health hp-bar battle-roster-health"><span style="width:${hpPercent}%"></span></div>
+      </div>
+      <span class="battle-roster-state">${escapeHtml(stateLabel)}</span>
+    </article>
+  `;
+}
+
+function renderBattleSwitchCard(monster, index, activeIndex) {
+  const species = CONTENT.speciesMap.get(monster.speciesId);
+  if (!species) {
+    return '';
+  }
+  const disabled = monster.currentHp <= 0 || index === activeIndex;
+  const hpPercent = Math.max(0, Math.round((monster.currentHp / Math.max(1, monster.stats.hp)) * 100));
+  const actionLabel = index === activeIndex ? 'Active Now' : monster.currentHp <= 0 ? 'Fainted' : 'Switch In';
+  return `
+    <form method="post" action="/play/action" class="battle-switch-card ${index === activeIndex ? 'is-active' : ''} ${monster.currentHp <= 0 ? 'is-disabled' : ''}">
+      <input type="hidden" name="action" value="switch" />
+      <input type="hidden" name="targetIndex" value="${index}" />
+      <div class="battle-switch-card-head">
+        <div class="battle-roster-icon palette-${escapeHtml(paletteForType(species.types?.[0]))}">${escapeHtml((monster.nickname || monster.name).slice(0, 2).toUpperCase())}</div>
+        <div class="battle-roster-copy">
+          <strong>${escapeHtml(monsterLabel(monster))}</strong>
+          <span>Lv ${formatNumber(monster.level)} ï¿½ HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
+        </div>
+      </div>
+      <div class="health hp-bar battle-roster-health"><span style="width:${hpPercent}%"></span></div>
+      <button class="button ${index === activeIndex ? 'accent' : 'ghost'}" type="submit" ${disabled ? 'disabled' : ''}>${escapeHtml(actionLabel)}</button>
+    </form>
+  `;
+}
+
 function renderBattleView(run) {
   const encounter = run.encounter;
   const activePlayer = run.party[encounter.playerIndex];
@@ -2573,18 +2946,18 @@ function renderBattleView(run) {
   const canUltra = activeHeldItem?.holdEffect === 'ultra-core' && !specialLocked && species?.stage >= 3;
   const canDynamax = activeHeldItem?.holdEffect === 'dynamax-band' && !specialLocked;
   const canVariant = activeHeldItem?.holdEffect === 'variant-core' && !specialLocked;
-  const moveButtons = activePlayer.moves.map((moveState, index) => {
-    const move = CONTENT.moveMap.get(moveState.id);
-    const zReady = activeHeldItem?.holdEffect === 'z-crystal' && !activePlayer.zMoveUsed && move && activeHeldItem.holdType === move.type;
-    return renderMoveCard(moveState, { actionable: true, moveIndex: index, zReady });
-  }).join('');
-  const switchButtons = run.party.map((monster, index) => `
-    <form method="post" action="/play/action" class="inline-form">
-      <input type="hidden" name="action" value="switch" />
-      <input type="hidden" name="targetIndex" value="${index}" />
-      <button class="chip-button" type="submit" ${monster.currentHp <= 0 || index === encounter.playerIndex ? 'disabled' : ''}>${escapeHtml(monsterLabel(monster))}</button>
-    </form>
-  `).join('');
+  const latestMessage = encounter.latestMessage || encounter.log[encounter.log.length - 1] || 'Awaiting the next command...';
+  const playerMoveTiles = activePlayer.moves.length
+    ? activePlayer.moves.map((moveState, index) => {
+      const move = CONTENT.moveMap.get(moveState.id);
+      const zReady = activeHeldItem?.holdEffect === 'z-crystal' && !activePlayer.zMoveUsed && move && activeHeldItem.holdType === move.type;
+      return renderBattleMoveTile(moveState, { moveIndex: index, zReady });
+    }).join('')
+    : '<article class="battle-move-empty">No moves are available for the active monster.</article>';
+  const enemyMoveTiles = activeEnemy.moves?.length
+    ? activeEnemy.moves.map((moveState) => renderBattleMoveTile(moveState, { readonly: true })).join('')
+    : '<article class="battle-move-empty">Enemy move data is still hidden.</article>';
+  const switchCards = run.party.map((monster, index) => renderBattleSwitchCard(monster, index, encounter.playerIndex)).join('');
   const itemOptions = Object.entries(run.bag).map(([slug, quantity]) => {
     const item = CONTENT.itemMap.get(slug);
     if (!item || item.category === 'capture') {
@@ -2599,7 +2972,8 @@ function renderBattleView(run) {
     }
     return `<option value="${slug}">${escapeHtml(item.name)} x${formatNumber(quantity)}</option>`;
   }).filter(Boolean).join('');
-  const teamCards = run.party.map((monster, index) => renderMonsterBattleCard(monster, index === encounter.playerIndex)).join('');
+  const playerRoster = run.party.map((monster, index) => renderBattleRosterCard(monster, { active: index === encounter.playerIndex, side: 'player' })).join('');
+  const enemyRoster = encounter.enemyParty.map((monster, index) => renderBattleRosterCard(monster, { active: index === encounter.enemyIndex, side: 'enemy' })).join('');
   const log = encounter.log.map((line) => `<li>${escapeHtml(line)}</li>`).join('');
   const chat = buildBattleChat(run, encounter).map((line) => `<li>${escapeHtml(line)}</li>`).join('');
   const weatherTone = encounter.weather?.type === 'sun' ? 'warning' : encounter.weather?.type === 'rain' ? 'success' : 'default';
@@ -2613,10 +2987,14 @@ function renderBattleView(run) {
       ? 'Momentum: Enemy'
       : 'Momentum: Even';
   const momentumTone = momentumDelta >= 20 ? 'success' : momentumDelta <= -20 ? 'warning' : 'default';
+  const encounterLabel = encounter.canCapture ? 'Wild Encounter' : 'Trainer Battle';
+  const encounterHint = encounter.canCapture
+    ? 'Weaken the target, then throw a stronger capture tool.'
+    : 'Trainer-owned Pokemon cannot be captured in this battle.';
 
   return `
-    <section class="battle-shell">
-      <section class="panel battle-header">
+    <section class="battle-shell battle-faceoff-shell">
+      <section class="panel battle-faceoff-header">
         <div>
           <p class="eyebrow">${escapeHtml(run.mode)} mode</p>
           <h1>Wave ${formatNumber(run.wave)}: ${escapeHtml(encounter.title)}</h1>
@@ -2628,155 +3006,205 @@ function renderBattleView(run) {
             ${badge(encounter.phase || 'day', encounter.phase === 'night' ? 'ghost' : 'warning')}
             ${badge(momentumLabel, momentumTone)}
           </div>
-          <p class="muted">Biome ${escapeHtml(encounter.biome)} - ability ${escapeHtml(abilityInfo(activePlayer)?.name || 'Battle Aura')} - held item ${escapeHtml(activeHeldItem?.name || 'none')} - ${escapeHtml(encounter.ambientEvent?.label || 'Quiet route')}</p>
+          <p class="muted">Biome ${escapeHtml(encounter.biome)} ï¿½ ability ${escapeHtml(abilityInfo(activePlayer)?.name || 'Battle Aura')} ï¿½ held item ${escapeHtml(activeHeldItem?.name || 'none')} ï¿½ ${escapeHtml(encounter.ambientEvent?.label || 'Quiet route')}</p>
         </div>
         <form method="post" action="/play/abandon" class="inline-form">
           <button class="button danger" type="submit">Abandon run</button>
         </form>
       </section>
-      <section class="grid-two battle-stage">
-        <article class="panel battle-side enemy-side">${renderMonsterBattleCard(activeEnemy, true)}</article>
-        <article class="panel battle-side player-side">${renderMonsterBattleCard(activePlayer, true)}</article>
-      </section>
-      <section class="panel battle-command-panel" data-tab-group="battle-actions">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">PokeBattle UI System</p>
-            <h2>Move deck and Battle Command Menu</h2>
+
+      <section class="panel battle-faceoff-board">
+        <div class="battle-board-ribbon">
+          <span class="battle-board-chip">${escapeHtml(encounterLabel)}</span>
+          <span>${escapeHtml(encounter.region || 'Frontier')}</span>
+          <span>${escapeHtml(encounter.biome)}</span>
+        </div>
+        <div class="battle-faceoff-grid">
+          <div class="battle-foe-moves">
+            <div class="battle-faceoff-subhead">
+              <p class="eyebrow">Opponent pressure</p>
+              <h2>Known Move Set</h2>
+            </div>
+            <div class="battle-move-grid battle-move-grid-foe">${enemyMoveTiles}</div>
           </div>
-          <div class="tab-strip">
-            <button class="tab-button is-active" type="button" data-tab-target="fight">Fight</button>
-            <button class="tab-button" type="button" data-tab-target="item">Item</button>
-            <button class="tab-button" type="button" data-tab-target="switch">Switch</button>
-            <button class="tab-button" type="button" data-tab-target="run">Run</button>
-            <button class="tab-button" type="button" data-tab-target="special">Special</button>
+
+          <div class="battle-active-slot battle-active-slot-enemy">
+            ${renderBattleFaceoffPanel(activeEnemy, { side: 'enemy', label: encounter.canCapture ? 'Wild target' : 'Opponent active', active: true })}
           </div>
-        </div>
-        <div class="tab-panel is-active" data-tab-panel="fight">
-          <div class="move-grid move-grid-advanced">${moveButtons}</div>
-        </div>
-        <div class="tab-panel" data-tab-panel="item">
-          <div class="action-panel-grid">
-            <form method="post" action="/play/action" class="stack-form panelish">
-              <input type="hidden" name="action" value="item" />
-              <label>
-                <span>Battle item</span>
-                <select name="itemSlug">${itemOptions || '<option value="">No usable battle items</option>'}</select>
-              </label>
-              <button class="button ghost" type="submit">Use item</button>
-            </form>
-            ${encounter.canCapture ? `
-              <form method="post" action="/play/action" class="stack-form panelish">
-                <input type="hidden" name="action" value="capture" />
-                <label>
-                  <span>Capture tool</span>
-                  <select name="itemSlug">${captureOptions || '<option value="">No capture items</option>'}</select>
-                </label>
-                <button class="button accent" type="submit">Capture</button>
-              </form>
-            ` : `
-              <article class="panelish muted-block">
-                <h3>Capture</h3>
-                <p class="muted">Trainer and boss fights cannot be captured.</p>
-              </article>
-            `}
+
+          <div class="battle-board-message-wrap">
+            <div class="battle-versus-chip">VS</div>
+            <div class="battle-message-screen battle-board-message battleTextOutput impact-${escapeHtml(encounter.lastMoveType || 'normal')}" data-battle-message data-text="${escapeHtml(latestMessage)}">${escapeHtml(latestMessage)}</div>
+            <div class="badge-row compact-row">
+              ${badge(weatherLabel, weatherTone)}
+              ${badge(`Turn ${encounter.turn}`, 'default')}
+              ${badge(`Cash ${money(run.money)}`, 'warning')}
+              ${badge(momentumLabel, momentumTone)}
+            </div>
+            <p class="battle-board-hint">${escapeHtml(encounterHint)}</p>
           </div>
-        </div>
-        <div class="tab-panel" data-tab-panel="switch">
-          <div class="button-row switch-row">${switchButtons}</div>
-        </div>
-        <div class="tab-panel" data-tab-panel="run">
-          <div class="action-panel-grid">
-            <form method="post" action="/play/action" class="stack-form panelish">
-              <input type="hidden" name="action" value="run" />
-              <h3>Retreat</h3>
-              <p class="muted">Wild fights can be escaped, but you lose run cash and skip the reward screen.</p>
-              <button class="button ghost" type="submit">Try to run</button>
-            </form>
-            <article class="panelish muted-block">
-              <h3>Dynamic Combat Text Engine</h3>
-              <p class="muted">The battle text feed below updates HP changes, status effects, crits, captures, and knockouts in Pokemon-style messaging.</p>
-            </article>
+
+          <div class="battle-active-slot battle-active-slot-player">
+            ${renderBattleFaceoffPanel(activePlayer, { side: 'player', label: 'Your active monster', active: true })}
           </div>
-        </div>
-        <div class="tab-panel" data-tab-panel="special">
-          <div class="action-panel-grid">
-            <article class="panelish">
-              <h3>Transformation</h3>
-              <p class="muted">Mega, Ultra, Dynamax, and Variant forms each use a distinct battle name and temporary move kit.</p>
-              <div class="button-row">
-                ${canMega ? `
-                  <form method="post" action="/play/action" class="inline-form">
-                    <input type="hidden" name="action" value="transform" />
-                    <input type="hidden" name="transformMode" value="mega" />
-                    <button class="button accent" type="submit">Mega Evolve</button>
-                  </form>
-                ` : ''}
-                ${canUltra ? `
-                  <form method="post" action="/play/action" class="inline-form">
-                    <input type="hidden" name="action" value="transform" />
-                    <input type="hidden" name="transformMode" value="ultra" />
-                    <button class="button accent" type="submit">Ultra Burst</button>
-                  </form>
-                ` : ''}
-                ${canDynamax ? `
-                  <form method="post" action="/play/action" class="inline-form">
-                    <input type="hidden" name="action" value="transform" />
-                    <input type="hidden" name="transformMode" value="dynamax" />
-                    <button class="button accent" type="submit">Dynamax</button>
-                  </form>
-                ` : ''}
-                ${canVariant ? `
-                  <form method="post" action="/play/action" class="inline-form">
-                    <input type="hidden" name="action" value="transform" />
-                    <input type="hidden" name="transformMode" value="variant" />
-                    <button class="button accent" type="submit">Variant Form</button>
-                  </form>
-                ` : ''}
-                ${!canMega && !canUltra && !canDynamax && !canVariant ? '<p class="muted">No special transformation is available for the active monster right now.</p>' : ''}
+
+          <section class="battle-console" data-tab-group="battle-actions">
+            <div class="battle-console-head">
+              <div>
+                <p class="eyebrow">Battle command</p>
+                <h2>Choose Your Action</h2>
               </div>
-            </article>
-            <article class="panelish muted-block">
-              <h3>Z-Move</h3>
-              <p class="muted">Matching Z Crystals add a dedicated Z-Move button directly onto compatible attacks in the Fight menu.</p>
-            </article>
-          </div>
+              <div class="tab-strip battle-tab-strip">
+                <button class="tab-button is-active" type="button" data-tab-target="fight">Fight</button>
+                <button class="tab-button" type="button" data-tab-target="item">Item</button>
+                <button class="tab-button" type="button" data-tab-target="switch">Switch</button>
+                <button class="tab-button" type="button" data-tab-target="special">Special</button>
+                <button class="tab-button" type="button" data-tab-target="run">Run</button>
+              </div>
+            </div>
+            <div class="tab-panel is-active" data-tab-panel="fight">
+              <div class="battle-move-grid battle-move-grid-player">${playerMoveTiles}</div>
+            </div>
+            <div class="tab-panel" data-tab-panel="item">
+              <div class="battle-console-grid">
+                <form method="post" action="/play/action" class="stack-form battle-utility-card">
+                  <input type="hidden" name="action" value="item" />
+                  <h3>Battle Item</h3>
+                  <p class="muted">Healing, buffs, and emergency tools from your run bag.</p>
+                  <label>
+                    <span>Choose item</span>
+                    <select name="itemSlug">${itemOptions || '<option value="">No usable battle items</option>'}</select>
+                  </label>
+                  <button class="button ghost" type="submit">Use item</button>
+                </form>
+                ${encounter.canCapture ? `
+                  <form method="post" action="/play/action" class="stack-form battle-utility-card">
+                    <input type="hidden" name="action" value="capture" />
+                    <h3>Capture Tool</h3>
+                    <p class="muted">When HP is low, throw your best orb.</p>
+                    <label>
+                      <span>Choose orb</span>
+                      <select name="itemSlug">${captureOptions || '<option value="">No capture items</option>'}</select>
+                    </label>
+                    <button class="button accent" type="submit">Capture</button>
+                  </form>
+                ` : `
+                  <article class="battle-utility-card battle-utility-muted">
+                    <h3>Capture Locked</h3>
+                    <p class="muted">This encounter belongs to another trainer, so capturing is disabled.</p>
+                  </article>
+                `}
+              </div>
+            </div>
+            <div class="tab-panel" data-tab-panel="switch">
+              <div class="battle-switch-grid">${switchCards}</div>
+            </div>
+            <div class="tab-panel" data-tab-panel="special">
+              <div class="battle-console-grid">
+                <article class="battle-utility-card">
+                  <h3>Transformation Deck</h3>
+                  <p class="muted">Mega, Ultra, Dynamax, and Variant forms each use a different battle name and temporary move kit.</p>
+                  <div class="button-row">
+                    ${canMega ? `
+                      <form method="post" action="/play/action" class="inline-form">
+                        <input type="hidden" name="action" value="transform" />
+                        <input type="hidden" name="transformMode" value="mega" />
+                        <button class="button accent" type="submit">Mega Evolve</button>
+                      </form>
+                    ` : ''}
+                    ${canUltra ? `
+                      <form method="post" action="/play/action" class="inline-form">
+                        <input type="hidden" name="action" value="transform" />
+                        <input type="hidden" name="transformMode" value="ultra" />
+                        <button class="button accent" type="submit">Ultra Burst</button>
+                      </form>
+                    ` : ''}
+                    ${canDynamax ? `
+                      <form method="post" action="/play/action" class="inline-form">
+                        <input type="hidden" name="action" value="transform" />
+                        <input type="hidden" name="transformMode" value="dynamax" />
+                        <button class="button accent" type="submit">Dynamax</button>
+                      </form>
+                    ` : ''}
+                    ${canVariant ? `
+                      <form method="post" action="/play/action" class="inline-form">
+                        <input type="hidden" name="action" value="transform" />
+                        <input type="hidden" name="transformMode" value="variant" />
+                        <button class="button accent" type="submit">Variant Form</button>
+                      </form>
+                    ` : ''}
+                    ${!canMega && !canUltra && !canDynamax && !canVariant ? '<p class="muted">No special transformation is available for the active monster right now.</p>' : ''}
+                  </div>
+                </article>
+                <article class="battle-utility-card battle-utility-muted">
+                  <h3>Z-Move Routing</h3>
+                  <p class="muted">Matching Z Crystals add an extra Z-Move button directly onto compatible attacks in the Fight menu.</p>
+                </article>
+              </div>
+            </div>
+            <div class="tab-panel" data-tab-panel="run">
+              <div class="battle-console-grid">
+                <form method="post" action="/play/action" class="stack-form battle-utility-card">
+                  <input type="hidden" name="action" value="run" />
+                  <h3>Retreat</h3>
+                  <p class="muted">Wild fights can be escaped, but you lose run cash and skip the reward screen.</p>
+                  <button class="button ghost" type="submit">Try to run</button>
+                </form>
+                <article class="battle-utility-card battle-utility-muted">
+                  <h3>Field Notes</h3>
+                  <p class="muted">Battle text, weather, momentum, and capture state are all mirrored in the arena board so you can make decisions faster.</p>
+                </article>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
-      <section class="grid-two battle-lower-grid">
-        <article class="panel">
+
+      <section class="battle-team-grid">
+        <article class="panel battle-team-panel battle-team-panel-enemy">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Party status</p>
-              <h2>Squad Overview</h2>
+              <p class="eyebrow">Opponent squad</p>
+              <h2>Enemy Team Preview</h2>
+            </div>
+            ${badge(`${formatNumber(encounter.enemyParty.length)} slots`, 'warning')}
+          </div>
+          <div class="battle-roster-stack">${enemyRoster}</div>
+        </article>
+        <article class="panel battle-team-panel battle-team-panel-player">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Your squad</p>
+              <h2>Your Team Preview</h2>
             </div>
             <a class="button ghost" href="/collection">Open Summary Screen</a>
           </div>
-          <div class="monster-grid compact-grid">${teamCards}</div>
-        </article>
-        <article class="panel battle-log-panel" data-tab-group="battle-feed">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Battle text output</p>
-              <h2>Battle Messages</h2>
-            </div>
-            <div class="tab-strip compact-tabs">
-              <button class="tab-button is-active" type="button" data-tab-target="messages">Messages</button>
-              <button class="tab-button" type="button" data-tab-target="combat-log">Combat Log</button>
-              <button class="tab-button" type="button" data-tab-target="party-chat">Party Chat</button>
-            </div>
-          </div>
-          <div class="tab-panel is-active" data-tab-panel="messages">
-            <div class="battle-message-screen battleTextOutput impact-${escapeHtml(encounter.lastMoveType || 'normal')}" data-battle-message data-text="${escapeHtml(encounter.latestMessage || encounter.log[encounter.log.length - 1] || 'Awaiting the next command...')}">${escapeHtml(encounter.latestMessage || encounter.log[encounter.log.length - 1] || 'Awaiting the next command...')}</div>
-          </div>
-          <div class="tab-panel" data-tab-panel="combat-log">
-            <ul class="clean-list compact scroll-list combatLog" data-autoscroll>${log}</ul>
-          </div>
-          <div class="tab-panel" data-tab-panel="party-chat">
-            <ul class="clean-list compact fightMessages">${chat}</ul>
-          </div>
+          <div class="battle-roster-stack">${playerRoster}</div>
         </article>
       </section>
+
+      <article class="panel battle-feed-panel" data-tab-group="battle-feed">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Battle feed</p>
+            <h2>Messages and Combat Log</h2>
+          </div>
+          <div class="tab-strip compact-tabs">
+            <button class="tab-button is-active" type="button" data-tab-target="messages">Messages</button>
+            <button class="tab-button" type="button" data-tab-target="combat-log">Combat Log</button>
+            <button class="tab-button" type="button" data-tab-target="party-chat">Party Chat</button>
+          </div>
+        </div>
+        <div class="tab-panel is-active" data-tab-panel="messages">
+          <div class="battle-message-screen battle-feed-message impact-${escapeHtml(encounter.lastMoveType || 'normal')}">${escapeHtml(latestMessage)}</div>
+        </div>
+        <div class="tab-panel" data-tab-panel="combat-log">
+          <ul class="clean-list compact scroll-list combatLog" data-autoscroll>${log}</ul>
+        </div>
+        <div class="tab-panel" data-tab-panel="party-chat">
+          <ul class="clean-list compact fightMessages">${chat}</ul>
+        </div>
+      </article>
     </section>
   `;
 }
@@ -3945,7 +4373,7 @@ function renderEmojiPicker(targetInputId, pickerSlug, categories = []) {
   }
   const tabs = categories.map((category, index) => `
     <button class="tab-button ${index === 0 ? 'is-active' : ''}" type="button" data-tab-target="${escapeHtml(`${pickerSlug}-${category.slug}`)}">
-      <span>${escapeHtml(category.icon || 'ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢')}</span>
+      <span>${escapeHtml(category.icon || 'ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢')}</span>
       <span>${escapeHtml(category.name)}</span>
     </button>
   `).join('');
@@ -4902,6 +5330,19 @@ export async function handleRequest(request, response) {
   const flash = consumeFlash(request, response);
 
   try {
+    if (request.method === 'POST' && pathname === '/auth/device-restore') {
+      const payload = await parseJson(request);
+      try {
+        const restoredUser = restoreSignedDeviceSave(payload?.backup || payload);
+        const token = createSession(restoredUser.id);
+        setCookie(response, config.sessionCookieName, token, { maxAge: config.sessionTtlHours * 3600 });
+        json(response, 200, { ok: true, redirect: '/hub' });
+      } catch (error) {
+        json(response, 400, { ok: false, error: error.message });
+      }
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/') {
       if (user) {
         redirect(response, '/hub');
@@ -5276,7 +5717,13 @@ export async function handleRequest(request, response) {
       if (!requireAuth(user, response)) {
         return;
       }
-      renderPage(response, { title: 'New Run', user, flash, body: renderRunSetup(getHubState(user.id)), wide: true });
+      renderPage(response, {
+        title: 'New Run',
+        user,
+        flash,
+        body: renderRunSetup(getHubState(user.id), url.searchParams.get('draft') || ''),
+        wide: true,
+      });
       return;
     }
 
@@ -5746,6 +6193,8 @@ if (isDirectRun) {
     console.log(`Moemon Arena listening on ${config.appOrigin}`);
   });
 }
+
+
 
 
 

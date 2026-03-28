@@ -1,4 +1,4 @@
-# Moemon Arena
+﻿# Moemon Arena
 
 Moemon Arena is a browser-based monster roguelike foundation inspired by the run flow of Pok\u00e9Rogue. It ships as a dependency-light Node 22 app with:
 
@@ -22,6 +22,10 @@ npm start
 3. Open `http://localhost:3000`.
 
 The first registered account becomes the admin account automatically.
+
+## Deployment Note
+
+On Vercel, the bundled SQLite file runs from `/tmp`, which is ephemeral. The app now keeps a signed browser backup for the current device and also writes a full world snapshot to `MOEMON_WORLD_BACKUP_PATH`, then reloads that snapshot on boot if the SQLite file is empty. That protects player/admin progress, party slots, EXP, runs, inventory, and sessions on the same host, but for true cross-device persistence you should still use durable storage outside the function filesystem.
 
 ## Password Reset Email
 
@@ -61,3 +65,4 @@ npm test
 ```
 
 That check boots the server, registers a fresh account, opens the hub, starts a run, and verifies the battle screen renders.
+

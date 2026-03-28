@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+﻿import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import tls from 'node:tls';
@@ -32,12 +32,20 @@ loadEnv();
 
 const inferredAppOrigin = process.env.APP_ORIGIN
   || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : `http://localhost:${process.env.PORT || 3000}`);
+const inferredDeviceSaveSecret = process.env.MOEMON_DEVICE_SAVE_SECRET
+  || process.env.DEVICE_SAVE_SECRET
+  || `${inferredAppOrigin}|${process.env.SESSION_COOKIE_NAME || 'moemon_session'}|moemon-device-save`;
+const defaultWorldBackupPath = process.env.MOEMON_WORLD_BACKUP_PATH
+  || process.env.WORLD_BACKUP_PATH
+  || (process.env.VERCEL ? path.join('/tmp', 'moemon-world-backup.json') : path.join(process.cwd(), 'data', 'world-backup.json'));
 
 export const config = {
   port: Number(process.env.PORT || 3000),
   appOrigin: inferredAppOrigin,
   sessionCookieName: process.env.SESSION_COOKIE_NAME || 'moemon_session',
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS || 168),
+  deviceSaveSecret: inferredDeviceSaveSecret,
+  worldBackupPath: defaultWorldBackupPath,
   smtpHost: process.env.SMTP_HOST || '',
   smtpPort: Number(process.env.SMTP_PORT || 465),
   smtpUser: process.env.SMTP_USER || '',
@@ -1061,49 +1069,55 @@ const ABILITIES = [
   { slug: 'magic-guard', name: 'Magic Guard', description: 'Indirect damage is prevented.' },
   { slug: 'multiscale', name: 'Multiscale', description: 'Damage is reduced while HP is full.' },
   { slug: 'serene-grace', name: 'Serene Grace', description: 'Secondary effects trigger more often.' },
+  { slug: 'intimidate', name: 'Intimidate', description: 'Cuts the foe Attack on entry.' },
+  { slug: 'water-absorb', name: 'Water Absorb', description: 'Water-type attacks restore HP instead of dealing damage.' },
+  { slug: 'volt-absorb', name: 'Volt Absorb', description: 'Electric-type attacks restore HP instead of dealing damage.' },
+  { slug: 'filter', name: 'Filter', description: 'Super-effective hits are softened.' },
+  { slug: 'reckless', name: 'Reckless', description: 'Recoil attacks hit harder.' },
+  { slug: 'natural-cure', name: 'Natural Cure', description: 'Status clears when switching out.' },
   { slug: 'prism-surge', name: 'Prism Surge', description: 'A rare hidden ability that boosts same-type attacks and restores HP.' },
 ];
 
 const ABILITY_MAP = new Map(ABILITIES.map((ability) => [ability.slug, ability]));
 const TYPE_ABILITY_POOLS = {
-  normal: ['battle-aura', 'adaptability', 'regenerator'],
-  fire: ['blaze', 'flame-body', 'guts'],
-  water: ['torrent', 'rain-dish', 'swift-swim'],
-  electric: ['static', 'adaptability', 'sniper'],
+  normal: ['battle-aura', 'adaptability', 'natural-cure'],
+  fire: ['blaze', 'flame-body', 'reckless'],
+  water: ['torrent', 'rain-dish', 'water-absorb'],
+  electric: ['static', 'volt-absorb', 'sniper'],
   grass: ['overgrow', 'chlorophyll', 'regenerator'],
-  ice: ['thick-fat', 'pressure', 'multiscale'],
-  fighting: ['battle-aura', 'guts', 'technician'],
-  poison: ['poison-point', 'regenerator', 'magic-guard'],
-  ground: ['sturdy', 'thick-fat', 'battle-aura'],
-  flying: ['levitate', 'multiscale', 'sniper'],
+  ice: ['thick-fat', 'pressure', 'filter'],
+  fighting: ['battle-aura', 'guts', 'reckless'],
+  poison: ['poison-point', 'regenerator', 'natural-cure'],
+  ground: ['sturdy', 'filter', 'battle-aura'],
+  flying: ['levitate', 'multiscale', 'intimidate'],
   psychic: ['pressure', 'serene-grace', 'magic-guard'],
-  bug: ['swarm', 'technician', 'iron-barbs'],
-  rock: ['sturdy', 'iron-barbs', 'battle-aura'],
+  bug: ['swarm', 'technician', 'intimidate'],
+  rock: ['sturdy', 'filter', 'battle-aura'],
   ghost: ['pressure', 'magic-guard', 'sniper'],
-  dragon: ['pressure', 'multiscale', 'adaptability'],
-  dark: ['pressure', 'sniper', 'guts'],
-  steel: ['sturdy', 'iron-barbs', 'technician'],
-  fairy: ['serene-grace', 'battle-aura', 'magic-guard'],
+  dragon: ['pressure', 'multiscale', 'intimidate'],
+  dark: ['pressure', 'sniper', 'intimidate'],
+  steel: ['sturdy', 'iron-barbs', 'filter'],
+  fairy: ['serene-grace', 'natural-cure', 'magic-guard'],
 };
 const HIDDEN_ABILITY_POOLS = {
-  normal: ['prism-surge', 'adaptability'],
-  fire: ['prism-surge', 'magic-guard'],
-  water: ['regenerator', 'prism-surge'],
-  electric: ['prism-surge', 'technician'],
-  grass: ['regenerator', 'prism-surge'],
-  ice: ['multiscale', 'prism-surge'],
-  fighting: ['guts', 'prism-surge'],
-  poison: ['magic-guard', 'prism-surge'],
-  ground: ['thick-fat', 'prism-surge'],
-  flying: ['multiscale', 'prism-surge'],
+  normal: ['natural-cure', 'adaptability'],
+  fire: ['reckless', 'prism-surge'],
+  water: ['water-absorb', 'regenerator'],
+  electric: ['volt-absorb', 'prism-surge'],
+  grass: ['regenerator', 'natural-cure'],
+  ice: ['filter', 'multiscale'],
+  fighting: ['guts', 'reckless'],
+  poison: ['natural-cure', 'prism-surge'],
+  ground: ['filter', 'prism-surge'],
+  flying: ['intimidate', 'prism-surge'],
   psychic: ['serene-grace', 'magic-guard'],
   bug: ['technician', 'prism-surge'],
-  rock: ['sturdy', 'prism-surge'],
+  rock: ['filter', 'prism-surge'],
   ghost: ['magic-guard', 'prism-surge'],
   dragon: ['adaptability', 'multiscale'],
-  dark: ['sniper', 'prism-surge'],
-  steel: ['iron-barbs', 'prism-surge'],
-  fairy: ['serene-grace', 'prism-surge'],
+  dark: ['intimidate', 'prism-surge'],
+  steel: ['filter', 'prism-surge'],
+  fairy: ['natural-cure', 'prism-surge'],
 };
 const EVOLUTION_STONE_CATALOG = [
   { slug: 'normal-stone', name: 'Normal Stone', evolveTypes: ['normal'], price: 640, unlockWave: 8, description: 'A stable type stone for straightforward evolutions.' },
@@ -1205,6 +1219,10 @@ function randomId(bytes = 24) {
 
 function hashValue(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function signValue(value, secret) {
+  return crypto.createHmac('sha256', secret).update(String(value || ''), 'utf8').digest('hex');
 }
 
 function readJson(value, fallback = null) {
@@ -1445,6 +1463,61 @@ function abilitySlugForSpecies(species, seed = 0, includeHidden = false) {
   return pool[index];
 }
 
+function applySwitchOutAbilities(monster, encounter = null) {
+  if (!monster || monster.currentHp <= 0) {
+    return;
+  }
+  const ability = getMonsterAbility(monster);
+  if (ability.slug === 'regenerator') {
+    const healed = healMonster(monster, Math.max(1, Math.floor(monster.stats.hp * 0.2)));
+    if (healed > 0 && encounter) {
+      logLine(encounter, (monster.nickname || monster.name) + ' restored HP with Regenerator.');
+    }
+  }
+  if (ability.slug === 'natural-cure' && monster.status) {
+    monster.status = null;
+    if (encounter) {
+      logLine(encounter, (monster.nickname || monster.name) + ' shook off its status with Natural Cure.');
+    }
+  }
+}
+
+function applySwitchInAbilities(monster, opposingMonster, encounter = null) {
+  if (!monster || monster.currentHp <= 0 || !opposingMonster || opposingMonster.currentHp <= 0) {
+    return;
+  }
+  const ability = getMonsterAbility(monster);
+  if (ability.slug === 'intimidate') {
+    const previous = opposingMonster.stages?.atk || 0;
+    opposingMonster.stages.atk = clamp(previous - 1, -6, 6);
+    if (encounter && opposingMonster.stages.atk < previous) {
+      logLine(encounter, (monster.nickname || monster.name) + ' cut ' + (opposingMonster.nickname || opposingMonster.name) + ' Attack with Intimidate.');
+    }
+  }
+}
+
+function triggerDefensiveAbsorbAbility(defender, move, encounter = null) {
+  if (!defender || !move) {
+    return false;
+  }
+  const ability = getMonsterAbility(defender);
+  if (move.type === 'water' && ability.slug === 'water-absorb') {
+    const healed = healMonster(defender, Math.max(1, Math.floor(defender.stats.hp * 0.18)));
+    if (encounter) {
+      logLine(encounter, (defender.nickname || defender.name) + ' absorbed the Water attack and recovered ' + healed + ' HP.');
+    }
+    return true;
+  }
+  if (move.type === 'electric' && ability.slug === 'volt-absorb') {
+    const healed = healMonster(defender, Math.max(1, Math.floor(defender.stats.hp * 0.18)));
+    if (encounter) {
+      logLine(encounter, (defender.nickname || defender.name) + ' absorbed the Electric attack and recovered ' + healed + ' HP.');
+    }
+    return true;
+  }
+  return false;
+}
+
 function moveRoleForEffect(effect) {
   return MOVE_ROLE_LABELS[effect] || 'Utility';
 }
@@ -1547,7 +1620,7 @@ function buildMoves() {
   ];
 
   const seen = new Map();
-  const totalMoveCount = 1440;
+  const totalMoveCount = 1800;
   const tierSize = Math.floor(totalMoveCount / 8);
   for (let index = 0; index < totalMoveCount; index += 1) {
     const type = TYPES[index % TYPES.length];
@@ -1578,6 +1651,60 @@ function buildMoves() {
     });
   }
   return moves;
+}
+
+const LIMITED_EVENT_MOVE_DEFINITIONS = [
+  ['ki-blast', 'Ki Blast', 'normal', 'special', 46, 100, 18, 'special', 1, 'A basic ki volley used to test openings.'],
+  ['meteor-smash', 'Meteor Smash', 'fighting', 'physical', 62, 96, 15, 'debuff-def', 2, 'A rushing strike that breaks the target guard.'],
+  ['instant-transmission', 'Instant Transmission', 'psychic', 'status', 0, 100, 14, 'buff-spe', 2, 'The user vanishes, then returns with sharper tempo.'],
+  ['kamehameha', 'Kamehameha', 'dragon', 'special', 92, 94, 10, 'special', 3, 'A focused beam of gathered ki.'],
+  ['dragon-fist', 'Dragon Fist', 'dragon', 'physical', 118, 88, 8, 'recoil', 5, 'A dragon-shaped strike that spends HP for a huge hit.'],
+  ['spirit-bomb', 'Spirit Bomb', 'fairy', 'special', 138, 82, 5, 'special', 5, 'A massive sphere of borrowed spirit energy.'],
+  ['galick-gun', 'Galick Gun', 'dragon', 'special', 90, 95, 10, 'special', 3, 'A piercing royal beam fired in a straight line.'],
+  ['big-bang-attack', 'Big Bang Attack', 'fire', 'special', 116, 88, 8, 'recoil', 4, 'A compressed blast that detonates point-blank.'],
+  ['final-flash', 'Final Flash', 'electric', 'special', 126, 86, 6, 'special', 5, 'A devastating beam with almost no wasted motion.'],
+  ['majin-burst', 'Majin Burst', 'dark', 'physical', 124, 90, 8, 'recoil', 4, 'Dark power spills outward in a reckless detonation.'],
+  ['god-bind', 'God Bind', 'psychic', 'special', 82, 95, 10, 'paralyze', 3, 'Divine pressure locks the foe in place.'],
+  ['divergent-fist', 'Divergent Fist', 'fighting', 'physical', 64, 100, 18, 'damage', 2, 'A delayed double-impact punch.'],
+  ['black-flash', 'Black Flash', 'dark', 'physical', 108, 92, 8, 'damage', 4, 'Cursed force detonates at the exact moment of impact.'],
+  ['blood-manipulation', 'Blood Manipulation', 'poison', 'special', 76, 100, 12, 'drain', 3, 'Shaped blood cuts the target while restoring the user.'],
+  ['cleave', 'Cleave', 'steel', 'physical', 104, 94, 10, 'debuff-def', 4, 'A cursed slash tuned to cut through guard.'],
+  ['malevolent-shrine', 'Malevolent Shrine', 'dark', 'status', 0, 100, 8, 'focus', 5, 'A ruinous domain sharpens every follow-up strike.'],
+  ['cursed-technique-red', 'Cursed Technique Red', 'fire', 'special', 96, 94, 10, 'debuff-atk', 4, 'Repulsive force blasts the foe backward and weakens them.'],
+  ['limitless-void', 'Limitless Void', 'psychic', 'status', 0, 100, 8, 'focus', 5, 'A flawless domain sharpens every next command.'],
+  ['hollow-purple', 'Hollow Purple', 'psychic', 'special', 144, 82, 5, 'recoil', 5, 'A void-colored blast erases everything in its path.'],
+  ['mana-burst', 'Mana Burst', 'psychic', 'special', 68, 100, 16, 'drain', 2, 'A tight mana shot that keeps the caster stable.'],
+  ['zoltraak', 'Zoltraak', 'psychic', 'special', 94, 95, 10, 'special', 3, 'A clean offensive spell built to delete targets fast.'],
+  ['judradjim', 'Judradjim', 'steel', 'special', 116, 88, 8, 'debuff-def', 4, 'A dense magical barrage that strips armor away.'],
+  ['barrier-weave', 'Barrier Weave', 'fairy', 'status', 0, 100, 14, 'buff-spd', 2, 'Layered mana barriers harden the team core.'],
+  ['volzanbel', 'Volzanbel', 'fire', 'special', 122, 86, 7, 'burn', 5, 'Ancient flame magic engulfs the field.'],
+  ['first-class-hex', 'First-Class Hex', 'ghost', 'special', 98, 94, 10, 'debuff-atk', 4, 'A refined curse that blunts the foe offensive edge.'],
+  ['fern-barrage', 'Fern Barrage', 'psychic', 'special', 88, 96, 12, 'paralyze', 3, 'A rapid-fire volley that disrupts enemy rhythm.'],
+  ['getsuga-tensho', 'Getsuga Tensho', 'ghost', 'physical', 92, 95, 10, 'damage', 3, 'A crescent wave of spirit pressure tears ahead.'],
+  ['bankai-release', 'Bankai Release', 'steel', 'status', 0, 100, 8, 'focus', 5, 'The user releases a higher form and surges forward.'],
+  ['mugetsu', 'Mugetsu', 'dark', 'special', 148, 80, 5, 'recoil', 5, 'A final moon-dark slash that empties everything into one hit.'],
+  ['sode-no-shirayuki', 'Sode no Shirayuki', 'ice', 'special', 92, 95, 10, 'special', 3, 'Cold white spirit power blooms into a cutting wave.'],
+  ['white-haze-prison', 'White Haze Prison', 'ice', 'special', 84, 96, 10, 'debuff-atk', 3, 'A binding frost suppresses the foe aggression.'],
+  ['hakka-no-togame', 'Hakka no Togame', 'ice', 'special', 138, 82, 5, 'special', 5, 'Absolute zero spreads from a single flawless release.'],
+];
+
+function buildLimitedEventMoves(startId = 1) {
+  return LIMITED_EVENT_MOVE_DEFINITIONS.map(([slug, name, type, category, power, accuracy, pp, effect, tier, description], index) => ({
+    id: startId + index,
+    slug,
+    name,
+    type,
+    category,
+    power,
+    accuracy,
+    pp,
+    priority: effect === 'buff-spe' ? 1 : 0,
+    effect,
+    role: moveRoleForEffect(effect),
+    tier,
+    description,
+    limitedSignature: true,
+  }));
 }
 
 function sampleMovePool(pool, count, startOffset = 0, step = 5) {
@@ -1681,10 +1808,10 @@ function createBranchSpeciesEntry(families, anchorSpecies, moveIdsByType, moveLo
       anchorSpecies.family * 7 + seed * 11 + branchIndex,
       moveIdsByType,
       moveLookup,
-      stage === 4 ? 20 : 18,
+      stage === 4 ? 24 : 20,
       stats,
     ),
-  ], stage === 4 ? 20 : 18);
+  ], stage === 4 ? 24 : 20);
   const id = families.length + 1;
   return {
     id,
@@ -1806,13 +1933,163 @@ function appendBranchSpecies(families, moveIdsByType, moveLookup) {
   }
 }
 
+const LIMITED_EVENT_SPECIES_LINES = [
+  {
+    series: 'Dragon Ball',
+    banner: 'Saiyan Legend',
+    biome: 'Cloud Spire',
+    moveTypes: ['fighting', 'psychic', 'dragon'],
+    signatureMoves: ['ki-blast', 'meteor-smash', 'instant-transmission', 'kamehameha', 'god-bind', 'dragon-fist', 'spirit-bomb'],
+    stages: [
+      { slug: 'goku-saiyan-youth', name: 'Goku, Saiyan Youth', stage: 1, types: ['fighting'], baseStats: { hp: 82, atk: 88, def: 74, spa: 76, spd: 74, spe: 84 }, abilityPool: ['battle-aura', 'adaptability'], hiddenAbilitySlug: 'prism-surge', rarity: 'rare', evolveLevel: 30 },
+      { slug: 'super-saiyan-goku', name: 'Super Saiyan Goku', stage: 2, types: ['fighting', 'electric'], baseStats: { hp: 94, atk: 110, def: 86, spa: 94, spd: 88, spe: 104 }, abilityPool: ['battle-aura', 'adaptability'], hiddenAbilitySlug: 'prism-surge', rarity: 'epic', evolveLevel: 56 },
+      { slug: 'super-saiyan-god-goku', name: 'Super Saiyan God Goku', stage: 3, types: ['fighting', 'dragon'], baseStats: { hp: 106, atk: 122, def: 98, spa: 116, spd: 102, spe: 118 }, abilityPool: ['adaptability', 'multiscale'], hiddenAbilitySlug: 'prism-surge', rarity: 'legendary', evolveLevel: 82 },
+      { slug: 'mastered-ultra-instinct-goku', name: 'Mastered Ultra Instinct Goku', stage: 4, types: ['fighting', 'psychic'], baseStats: { hp: 118, atk: 134, def: 110, spa: 126, spd: 118, spe: 136 }, abilityPool: ['adaptability', 'multiscale'], hiddenAbilitySlug: 'prism-surge', rarity: 'mythic' },
+    ],
+  },
+  {
+    series: 'Dragon Ball',
+    banner: 'Royal Eclipse',
+    biome: 'Astral Reach',
+    moveTypes: ['electric', 'fighting', 'dragon', 'dark'],
+    signatureMoves: ['ki-blast', 'galick-gun', 'meteor-smash', 'big-bang-attack', 'final-flash', 'majin-burst'],
+    stages: [
+      { slug: 'prince-vegeta', name: 'Prince Vegeta', stage: 1, types: ['electric', 'fighting'], baseStats: { hp: 76, atk: 94, def: 78, spa: 84, spd: 74, spe: 88 }, abilityPool: ['battle-aura', 'reckless'], hiddenAbilitySlug: 'intimidate', rarity: 'rare', evolveLevel: 34 },
+      { slug: 'super-saiyan-vegeta', name: 'Super Saiyan Vegeta', stage: 2, types: ['electric', 'fighting'], baseStats: { hp: 90, atk: 120, def: 90, spa: 100, spd: 88, spe: 108 }, abilityPool: ['battle-aura', 'adaptability'], hiddenAbilitySlug: 'reckless', rarity: 'epic', evolveLevel: 68 },
+      { slug: 'majin-vegeta', name: 'Majin Vegeta', stage: 3, types: ['electric', 'dark'], baseStats: { hp: 104, atk: 136, def: 102, spa: 112, spd: 98, spe: 124 }, abilityPool: ['reckless', 'intimidate'], hiddenAbilitySlug: 'prism-surge', rarity: 'mythic' },
+    ],
+  },
+  {
+    series: 'Jujutsu Kaisen',
+    banner: 'Cursed Breakers',
+    biome: 'Shadow Lab',
+    moveTypes: ['fighting', 'dark', 'poison', 'fire'],
+    signatureMoves: ['divergent-fist', 'black-flash', 'blood-manipulation', 'cleave', 'malevolent-shrine'],
+    stages: [
+      { slug: 'yuji-itadori', name: 'Yuji Itadori', stage: 1, types: ['fighting'], baseStats: { hp: 84, atk: 90, def: 78, spa: 60, spd: 74, spe: 88 }, abilityPool: ['battle-aura', 'guts'], hiddenAbilitySlug: 'reckless', rarity: 'rare', evolveLevel: 36 },
+      { slug: 'sukuna-vessel', name: 'Sukuna Vessel', stage: 2, types: ['fighting', 'dark'], baseStats: { hp: 96, atk: 118, def: 90, spa: 82, spd: 88, spe: 102 }, abilityPool: ['guts', 'intimidate'], hiddenAbilitySlug: 'reckless', rarity: 'epic', evolveLevel: 70 },
+      { slug: 'ryomen-sukuna', name: 'Ryomen Sukuna', stage: 3, types: ['dark', 'fire'], baseStats: { hp: 112, atk: 138, def: 98, spa: 114, spd: 102, spe: 120 }, abilityPool: ['intimidate', 'reckless'], hiddenAbilitySlug: 'prism-surge', rarity: 'mythic' },
+    ],
+  },
+  {
+    series: 'Jujutsu Kaisen',
+    banner: 'Limitless Night',
+    biome: 'Astral Reach',
+    moveTypes: ['psychic', 'fire', 'fairy', 'ghost'],
+    signatureMoves: ['cursed-technique-red', 'limitless-void', 'hollow-purple', 'barrier-weave'],
+    stages: [
+      { slug: 'satoru-gojo', name: 'Satoru Gojo', stage: 1, types: ['psychic'], baseStats: { hp: 78, atk: 62, def: 78, spa: 102, spd: 90, spe: 96 }, abilityPool: ['magic-guard', 'filter'], hiddenAbilitySlug: 'serene-grace', rarity: 'rare', evolveLevel: 40 },
+      { slug: 'six-eyes-gojo', name: 'Six Eyes Gojo', stage: 2, types: ['psychic', 'fairy'], baseStats: { hp: 90, atk: 70, def: 92, spa: 126, spd: 108, spe: 118 }, abilityPool: ['magic-guard', 'filter'], hiddenAbilitySlug: 'serene-grace', rarity: 'epic', evolveLevel: 78 },
+      { slug: 'limitless-gojo', name: 'Limitless Gojo', stage: 3, types: ['psychic', 'ghost'], baseStats: { hp: 104, atk: 82, def: 104, spa: 144, spd: 118, spe: 132 }, abilityPool: ['magic-guard', 'filter'], hiddenAbilitySlug: 'prism-surge', rarity: 'mythic' },
+    ],
+  },
+  {
+    series: 'Frieren',
+    banner: 'Ages End',
+    biome: 'Starroot Vale',
+    moveTypes: ['psychic', 'fairy', 'fire', 'ghost', 'steel'],
+    signatureMoves: ['mana-burst', 'zoltraak', 'judradjim', 'barrier-weave', 'volzanbel', 'first-class-hex'],
+    stages: [
+      { slug: 'frieren-traveling-mage', name: 'Frieren, Traveling Mage', stage: 1, types: ['psychic', 'fairy'], baseStats: { hp: 74, atk: 48, def: 76, spa: 108, spd: 96, spe: 80 }, abilityPool: ['natural-cure', 'magic-guard'], hiddenAbilitySlug: 'serene-grace', rarity: 'rare', evolveLevel: 38 },
+      { slug: 'frieren-first-class', name: 'Frieren, First-Class Mage', stage: 2, types: ['psychic', 'fairy'], baseStats: { hp: 88, atk: 58, def: 90, spa: 128, spd: 112, spe: 96 }, abilityPool: ['natural-cure', 'magic-guard'], hiddenAbilitySlug: 'prism-surge', rarity: 'epic', evolveLevel: 72 },
+      { slug: 'frieren-era-end', name: 'Frieren, Era End', stage: 3, types: ['psychic', 'ghost'], baseStats: { hp: 102, atk: 70, def: 102, spa: 146, spd: 126, spe: 110 }, abilityPool: ['magic-guard', 'filter'], hiddenAbilitySlug: 'prism-surge', rarity: 'mythic' },
+    ],
+  },
+  {
+    series: 'Frieren',
+    banner: 'Northern Mage Corps',
+    biome: 'Moon Orchard',
+    moveTypes: ['psychic', 'steel', 'fairy'],
+    signatureMoves: ['fern-barrage', 'mana-burst', 'zoltraak', 'barrier-weave', 'judradjim'],
+    stages: [
+      { slug: 'fern-apprentice-mage', name: 'Fern, Apprentice Mage', stage: 1, types: ['psychic'], baseStats: { hp: 72, atk: 44, def: 64, spa: 102, spd: 88, spe: 86 }, abilityPool: ['serene-grace', 'magic-guard'], hiddenAbilitySlug: 'natural-cure', rarity: 'rare', evolveLevel: 36 },
+      { slug: 'fern-battle-mage', name: 'Fern, Battle Mage', stage: 2, types: ['psychic', 'steel'], baseStats: { hp: 84, atk: 52, def: 78, spa: 122, spd: 102, spe: 104 }, abilityPool: ['serene-grace', 'magic-guard'], hiddenAbilitySlug: 'prism-surge', rarity: 'epic', evolveLevel: 74 },
+      { slug: 'fern-master-caster', name: 'Fern, Master Caster', stage: 3, types: ['psychic', 'steel'], baseStats: { hp: 98, atk: 62, def: 92, spa: 138, spd: 114, spe: 120 }, abilityPool: ['magic-guard', 'filter'], hiddenAbilitySlug: 'prism-surge', rarity: 'legendary' },
+    ],
+  },
+  {
+    series: 'Bleach',
+    banner: 'Soul Reaper Arc',
+    biome: 'Silent Trench',
+    moveTypes: ['ghost', 'fighting', 'dark', 'steel'],
+    signatureMoves: ['getsuga-tensho', 'bankai-release', 'mugetsu'],
+    stages: [
+      { slug: 'ichigo-kurosaki', name: 'Ichigo Kurosaki', stage: 1, types: ['ghost', 'fighting'], baseStats: { hp: 82, atk: 94, def: 78, spa: 68, spd: 74, spe: 86 }, abilityPool: ['pressure', 'adaptability'], hiddenAbilitySlug: 'reckless', rarity: 'rare', evolveLevel: 42 },
+      { slug: 'bankai-ichigo', name: 'Bankai Ichigo', stage: 2, types: ['ghost', 'steel'], baseStats: { hp: 94, atk: 118, def: 90, spa: 82, spd: 88, spe: 110 }, abilityPool: ['pressure', 'adaptability'], hiddenAbilitySlug: 'reckless', rarity: 'epic', evolveLevel: 76 },
+      { slug: 'mugetsu-ichigo', name: 'Mugetsu Ichigo', stage: 3, types: ['dark', 'ghost'], baseStats: { hp: 108, atk: 136, def: 102, spa: 108, spd: 100, spe: 126 }, abilityPool: ['adaptability', 'reckless'], hiddenAbilitySlug: 'prism-surge', rarity: 'mythic' },
+    ],
+  },
+  {
+    series: 'Bleach',
+    banner: 'Frozen Court',
+    biome: 'Glacier Tunnels',
+    moveTypes: ['ice', 'ghost', 'fairy'],
+    signatureMoves: ['sode-no-shirayuki', 'white-haze-prison', 'hakka-no-togame', 'barrier-weave'],
+    stages: [
+      { slug: 'rukia-kuchiki', name: 'Rukia Kuchiki', stage: 1, types: ['ice', 'ghost'], baseStats: { hp: 72, atk: 60, def: 78, spa: 96, spd: 90, spe: 82 }, abilityPool: ['natural-cure', 'filter'], hiddenAbilitySlug: 'magic-guard', rarity: 'rare', evolveLevel: 38 },
+      { slug: 'shikai-rukia', name: 'Shikai Rukia', stage: 2, types: ['ice', 'ghost'], baseStats: { hp: 84, atk: 70, def: 92, spa: 118, spd: 104, spe: 94 }, abilityPool: ['filter', 'natural-cure'], hiddenAbilitySlug: 'magic-guard', rarity: 'epic', evolveLevel: 74 },
+      { slug: 'bankai-rukia', name: 'Bankai Rukia', stage: 3, types: ['ice', 'fairy'], baseStats: { hp: 98, atk: 82, def: 106, spa: 138, spd: 120, spe: 110 }, abilityPool: ['filter', 'magic-guard'], hiddenAbilitySlug: 'prism-surge', rarity: 'legendary' },
+    ],
+  },
+];
+
+function limitedCatchRateForRarity(rarity) {
+  return rarity === 'mythic' ? 0.03 : rarity === 'legendary' ? 0.05 : rarity === 'epic' ? 0.08 : 0.12;
+}
+
+function buildLimitedEventMovePool(entry, line, seed, moveIdsByType, moveLookup, moveSlugMap) {
+  const signatureIds = (entry.signatureMoves || line.signatureMoves || []).map((slug) => moveSlugMap.get(slug)).filter(Boolean);
+  return dedupeList([
+    ...signatureIds,
+    ...buildTypeMovePool(entry.moveTypes || line.moveTypes || entry.types, entry.stage || 3, seed, moveIdsByType, moveLookup, 24, entry.baseStats),
+  ], 24);
+}
+
+function appendLimitedEventSpecies(families, moveIdsByType, moveLookup, moveSlugMap) {
+  const nextFamily = families.reduce((max, species) => Math.max(max, Number(species.family || 0)), 0) + 1;
+  LIMITED_EVENT_SPECIES_LINES.forEach((line, index) => {
+    const familyId = nextFamily + index;
+    const baseId = families.length + 1;
+    line.stages.forEach((entry, stageIndex) => {
+      const id = baseId + stageIndex;
+      const total = totalStats(entry.baseStats);
+      families.push({
+        id,
+        slug: entry.slug,
+        name: entry.name,
+        stage: entry.stage || stageIndex + 1,
+        types: entry.types,
+        biome: entry.biome || line.biome,
+        family: familyId,
+        starterEligible: false,
+        starterCost: clamp(Math.ceil(total / 95), 6, 12),
+        catchRate: limitedCatchRateForRarity(entry.rarity),
+        baseStats: entry.baseStats,
+        movePool: buildLimitedEventMovePool(entry, line, familyId * 97 + stageIndex * 17, moveIdsByType, moveLookup, moveSlugMap),
+        abilityPool: entry.abilityPool,
+        hiddenAbilitySlug: entry.hiddenAbilitySlug,
+        evolvesTo: stageIndex < line.stages.length - 1 ? id + 1 : null,
+        evolveLevel: stageIndex < line.stages.length - 1 ? line.stages[stageIndex].evolveLevel || null : null,
+        evolveStoneSlugs: [],
+        stoneEvolutionMap: {},
+        rarity: entry.rarity,
+        total,
+        limitedEdition: true,
+        limitedSeries: line.series,
+        limitedBanner: line.banner,
+      });
+    });
+  });
+}
+
 function buildSpecies(moves) {
   const families = [];
   const moveLookup = new Map(moves.map((move) => [move.id, move]));
-  const moveIdsByType = new Map(TYPES.map((type) => [type, moves.filter((move) => move.type === type).map((move) => move.id)]));
+  const moveSlugMap = new Map(moves.map((move) => [move.slug, move.id]));
+  const moveIdsByType = new Map(TYPES.map((type) => [type, moves.filter((move) => move.type === type && !move.limitedSignature).map((move) => move.id)]));
   let rootIndex = 0;
 
-  for (let family = 0; family < 183; family += 1) {
+  for (let family = 0; family < 216; family += 1) {
     const typeA = TYPES[family % TYPES.length];
     const altIndex = (family * 7 + 3) % TYPES.length;
     const typeB = family % 4 === 0 && TYPES[altIndex] !== typeA ? TYPES[altIndex] : null;
@@ -1855,7 +2132,7 @@ function buildSpecies(moves) {
         starterCost,
         catchRate: stage === 1 ? 0.42 : stage === 2 ? 0.28 : 0.16,
         baseStats: stats,
-        movePool: movePool.slice(0, 18),
+        movePool: movePool.slice(0, 24),
         abilityPool: buildAbilityPoolForSpecies(types),
         hiddenAbilitySlug: hiddenAbilitySlugForSpecies(types, family, stage),
         evolvesTo: stage < 3 ? id + 1 : null,
@@ -2014,6 +2291,7 @@ function buildSpecies(moves) {
     });
   });
 
+  appendLimitedEventSpecies(families, moveIdsByType, moveLookup, moveSlugMap);
   return families;
 }
 
@@ -2681,7 +2959,9 @@ function expandItemCatalog() {
 
 expandItemCatalog();
 
-const MOVES = buildMoves();
+const BASE_MOVES = buildMoves();
+const LIMITED_EVENT_MOVES = buildLimitedEventMoves(BASE_MOVES.length + 1);
+const MOVES = [...BASE_MOVES, ...LIMITED_EVENT_MOVES];
 const SPECIES = buildSpecies(MOVES);
 const MOVE_MAP = new Map(MOVES.map((move) => [move.id, move]));
 const MOVE_SLUG_MAP = new Map(MOVES.map((move) => [move.slug, move]));
@@ -3202,6 +3482,277 @@ ensureTableColumn('chat_messages', 'image_url', 'TEXT');
 ensureTableColumn('chat_messages', 'link_url', 'TEXT');
 ensureTableColumn('chat_messages', 'link_label', 'TEXT');
 
+const WORLD_BACKUP_FORMAT_VERSION = 1;
+const WORLD_BACKUP_TABLES = ['users', 'sessions', 'collection', 'inventories', 'runs', 'admin_logs', 'chat_messages'];
+let worldBackupTimer = null;
+let worldBackupPendingReason = 'startup-sync';
+let worldBackupSuspended = 0;
+
+function worldBackupEnabled() {
+  return typeof config.worldBackupPath === 'string' && config.worldBackupPath.trim().length > 0;
+}
+
+function scheduleWorldBackup(reason = 'db-mutation') {
+  if (!worldBackupEnabled() || worldBackupSuspended > 0) {
+    return;
+  }
+  worldBackupPendingReason = reason || worldBackupPendingReason || 'db-mutation';
+  if (worldBackupTimer) {
+    return;
+  }
+  worldBackupTimer = setTimeout(() => {
+    worldBackupTimer = null;
+    const pendingReason = worldBackupPendingReason || 'db-mutation';
+    worldBackupPendingReason = 'db-mutation';
+    try {
+      writeWorldBackupSnapshot(pendingReason);
+    } catch (error) {
+      console.error('[moemon] Failed to write world backup snapshot:', error);
+    }
+  }, 150);
+  worldBackupTimer.unref?.();
+}
+
+function withWorldBackupSuspended(callback) {
+  worldBackupSuspended += 1;
+  try {
+    return callback();
+  } finally {
+    worldBackupSuspended = Math.max(0, worldBackupSuspended - 1);
+  }
+}
+
+function buildWorldBackupPayload(reason = 'db-mutation') {
+  return {
+    version: WORLD_BACKUP_FORMAT_VERSION,
+    issuedAt: nowIso(),
+    reason,
+    databasePath: dbPath,
+    users: db.prepare('SELECT * FROM users ORDER BY id ASC').all(),
+    sessions: db.prepare('SELECT * FROM sessions ORDER BY id ASC').all(),
+    collection: db.prepare('SELECT * FROM collection ORDER BY id ASC').all(),
+    inventories: db.prepare('SELECT * FROM inventories ORDER BY id ASC').all(),
+    runs: db.prepare('SELECT * FROM runs ORDER BY id ASC').all(),
+    adminLogs: db.prepare('SELECT * FROM admin_logs ORDER BY id ASC').all(),
+    chatMessages: db.prepare('SELECT * FROM chat_messages ORDER BY id ASC').all(),
+  };
+}
+
+function writeWorldBackupSnapshot(reason = 'db-mutation') {
+  if (!worldBackupEnabled()) {
+    return;
+  }
+  const snapshotPath = config.worldBackupPath;
+  fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+  const tempPath = `${snapshotPath}.tmp`;
+  fs.writeFileSync(tempPath, writeJson(buildWorldBackupPayload(reason)), 'utf8');
+  if (fs.existsSync(snapshotPath)) {
+    fs.rmSync(snapshotPath, { force: true });
+  }
+  fs.renameSync(tempPath, snapshotPath);
+}
+
+function readWorldBackupSnapshot() {
+  if (!worldBackupEnabled()) {
+    return null;
+  }
+  const snapshotPath = config.worldBackupPath;
+  if (!snapshotPath || !fs.existsSync(snapshotPath)) {
+    return null;
+  }
+  try {
+    const snapshot = readJson(fs.readFileSync(snapshotPath, 'utf8'), null);
+    if (!snapshot || Number(snapshot.version || 0) !== WORLD_BACKUP_FORMAT_VERSION) {
+      return null;
+    }
+    return snapshot;
+  } catch (error) {
+    console.error('[moemon] Failed to read world backup snapshot:', error);
+    return null;
+  }
+}
+
+function restoreWorldBackupSnapshot(snapshot) {
+  if (!snapshot || Number(snapshot.version || 0) !== WORLD_BACKUP_FORMAT_VERSION) {
+    throw new Error('World backup format is not supported.');
+  }
+
+  withWorldBackupSuspended(() => {
+    db.exec('BEGIN');
+    try {
+      db.prepare('DELETE FROM chat_messages').run();
+      db.prepare('DELETE FROM admin_logs').run();
+      db.prepare('DELETE FROM runs').run();
+      db.prepare('DELETE FROM inventories').run();
+      db.prepare('DELETE FROM collection').run();
+      db.prepare('DELETE FROM sessions').run();
+      db.prepare('DELETE FROM users').run();
+
+      const insertUser = db.prepare(`
+        INSERT INTO users (id, username, username_lower, email, password_hash, role, cash, meta_json, reset_token_hash, reset_expires, created_at, last_login)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const row of snapshot.users || []) {
+        insertUser.run(
+          Number(row.id),
+          row.username,
+          row.username_lower,
+          row.email,
+          row.password_hash,
+          row.role || 'player',
+          Math.max(0, Math.round(Number(row.cash || 0))),
+          row.meta_json ?? null,
+          row.reset_token_hash ?? null,
+          row.reset_expires ?? null,
+          row.created_at || nowIso(),
+          row.last_login ?? null,
+        );
+      }
+
+      const insertSession = db.prepare(`
+        INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      for (const row of snapshot.sessions || []) {
+        insertSession.run(
+          Number(row.id),
+          Number(row.user_id),
+          row.token_hash,
+          row.created_at || nowIso(),
+          row.expires_at || nowIso(),
+        );
+      }
+
+      const insertCollection = db.prepare(`
+        INSERT INTO collection (id, user_id, monster_json, starter_unlocked, favorite, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const row of snapshot.collection || []) {
+        insertCollection.run(
+          Number(row.id),
+          Number(row.user_id),
+          row.monster_json,
+          row.starter_unlocked ? 1 : 0,
+          row.favorite ? 1 : 0,
+          row.created_at || nowIso(),
+        );
+      }
+
+      const insertInventory = db.prepare(`
+        INSERT INTO inventories (id, user_id, item_slug, quantity)
+        VALUES (?, ?, ?, ?)
+      `);
+      for (const row of snapshot.inventories || []) {
+        insertInventory.run(
+          Number(row.id),
+          Number(row.user_id),
+          row.item_slug,
+          Math.max(0, Math.floor(Number(row.quantity || 0))),
+        );
+      }
+
+      const insertRun = db.prepare(`
+        INSERT INTO runs (id, user_id, status, mode, challenge_slug, summary_json, run_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const row of snapshot.runs || []) {
+        insertRun.run(
+          Number(row.id),
+          Number(row.user_id),
+          row.status || 'active',
+          row.mode || 'classic',
+          row.challenge_slug ?? null,
+          row.summary_json ?? null,
+          row.run_json,
+          row.created_at || nowIso(),
+          row.updated_at || row.created_at || nowIso(),
+        );
+      }
+
+      const insertAdminLog = db.prepare(`
+        INSERT INTO admin_logs (id, admin_user_id, target_user_id, action, details_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const row of snapshot.adminLogs || []) {
+        insertAdminLog.run(
+          Number(row.id),
+          Number(row.admin_user_id),
+          row.target_user_id == null ? null : Number(row.target_user_id),
+          row.action,
+          row.details_json ?? null,
+          row.created_at || nowIso(),
+        );
+      }
+
+      const insertChatMessage = db.prepare(`
+        INSERT INTO chat_messages (id, room_type, sender_user_id, target_user_id, body, created_at, image_url, link_url, link_label)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const row of snapshot.chatMessages || []) {
+        insertChatMessage.run(
+          Number(row.id),
+          row.room_type,
+          Number(row.sender_user_id),
+          row.target_user_id == null ? null : Number(row.target_user_id),
+          row.body,
+          row.created_at || nowIso(),
+          row.image_url ?? null,
+          row.link_url ?? null,
+          row.link_label ?? null,
+        );
+      }
+
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  });
+
+  writeWorldBackupSnapshot('restored-world-backup');
+}
+
+function isWorldBackupMutationSql(sqlText) {
+  const sql = String(sqlText || '').trim();
+  if (!/^(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(sql)) {
+    return false;
+  }
+  return WORLD_BACKUP_TABLES.some((tableName) => new RegExp(`\\b(?:INTO|UPDATE|FROM)\\s+${tableName}\\b`, 'i').test(sql));
+}
+
+function installWorldBackupHooks() {
+  const originalPrepare = db.prepare.bind(db);
+  db.prepare = function wrappedPrepare(sqlText) {
+    const statement = originalPrepare(sqlText);
+    if (!statement || typeof statement.run !== 'function' || !isWorldBackupMutationSql(sqlText)) {
+      return statement;
+    }
+    const originalRun = statement.run.bind(statement);
+    statement.run = (...params) => {
+      const result = originalRun(...params);
+      scheduleWorldBackup('db-mutation');
+      return result;
+    };
+    return statement;
+  };
+}
+
+installWorldBackupHooks();
+
+const bootstrapUserCount = Number(db.prepare('SELECT COUNT(*) AS count FROM users').get()?.count || 0);
+if (bootstrapUserCount > 0) {
+  scheduleWorldBackup('startup-sync');
+} else {
+  const startupSnapshot = readWorldBackupSnapshot();
+  if (startupSnapshot) {
+    try {
+      restoreWorldBackupSnapshot(startupSnapshot);
+    } catch (error) {
+      console.error('[moemon] Failed to restore world backup snapshot:', error);
+    }
+  }
+}
+
 function normalizeEmail(value) {
   return String(value ?? '').trim().toLowerCase();
 }
@@ -3603,6 +4154,229 @@ export function getUserBySessionToken(token) {
   if (user) {
     ensureEndlessUnlock(user);
   }
+  return user;
+}
+
+const DEVICE_SAVE_FORMAT_VERSION = 2;
+const SUPPORTED_DEVICE_SAVE_FORMAT_VERSIONS = new Set([1, DEVICE_SAVE_FORMAT_VERSION]);
+
+function remapCollectionIdValue(value, collectionIdMap) {
+  const normalized = Number(value || 0);
+  if (!Number.isInteger(normalized) || normalized <= 0) {
+    return value;
+  }
+  return collectionIdMap.get(normalized) ?? value;
+}
+
+function remapCollectionIdsInValue(value, collectionIdMap, keyName = '') {
+  if (!collectionIdMap.size) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (/collectionids$/i.test(keyName)) {
+      return value.map((entry) => remapCollectionIdValue(entry, collectionIdMap));
+    }
+    return value.map((entry) => remapCollectionIdsInValue(entry, collectionIdMap));
+  }
+  if (!value || typeof value !== 'object') {
+    return /collectionid$/i.test(keyName) ? remapCollectionIdValue(value, collectionIdMap) : value;
+  }
+  const next = {};
+  for (const [childKey, childValue] of Object.entries(value)) {
+    if (/collectionids$/i.test(childKey) && Array.isArray(childValue)) {
+      next[childKey] = childValue.map((entry) => remapCollectionIdValue(entry, collectionIdMap));
+      continue;
+    }
+    if (/collectionid$/i.test(childKey)) {
+      next[childKey] = remapCollectionIdValue(childValue, collectionIdMap);
+      continue;
+    }
+    next[childKey] = remapCollectionIdsInValue(childValue, collectionIdMap, childKey);
+  }
+  return next;
+}
+
+function buildDeviceSavePayload(userId) {
+  const row = db.prepare(`
+    SELECT username, email, password_hash, role, cash, meta_json, created_at, last_login
+    FROM users
+    WHERE id = ?
+  `).get(userId);
+  if (!row) {
+    return null;
+  }
+  return {
+    version: DEVICE_SAVE_FORMAT_VERSION,
+    issuedAt: nowIso(),
+    user: {
+      username: row.username,
+      email: row.email,
+      passwordHash: row.password_hash,
+      role: row.role,
+      cash: Number(row.cash || 0),
+      meta: { ...defaultMeta(), ...(readJson(row.meta_json, {}) || {}) },
+      createdAt: row.created_at || nowIso(),
+      lastLogin: row.last_login || null,
+    },
+    collection: db.prepare('SELECT id, monster_json, starter_unlocked, favorite, created_at FROM collection WHERE user_id = ? ORDER BY id ASC').all(userId)
+      .map((entry) => ({
+        id: Number(entry.id),
+        monster: readJson(entry.monster_json, null),
+        starterUnlocked: !!entry.starter_unlocked,
+        favorite: !!entry.favorite,
+        createdAt: entry.created_at || nowIso(),
+      }))
+      .filter((entry) => entry.monster),
+    inventories: db.prepare('SELECT item_slug, quantity FROM inventories WHERE user_id = ? AND quantity > 0 ORDER BY item_slug ASC').all(userId)
+      .map((entry) => ({
+        itemSlug: entry.item_slug,
+        quantity: Math.max(0, Number(entry.quantity || 0)),
+      }))
+      .filter((entry) => entry.itemSlug && entry.quantity > 0),
+    runs: db.prepare('SELECT status, mode, challenge_slug, summary_json, run_json, created_at, updated_at FROM runs WHERE user_id = ? ORDER BY id ASC').all(userId)
+      .map((entry) => ({
+        status: entry.status,
+        mode: entry.mode,
+        challengeSlug: entry.challenge_slug || '',
+        summary: readJson(entry.summary_json, null),
+        run: readJson(entry.run_json, null),
+        createdAt: entry.created_at || nowIso(),
+        updatedAt: entry.updated_at || entry.created_at || nowIso(),
+      }))
+      .filter((entry) => entry.run),
+  };
+}
+
+export function createSignedDeviceSave(userId) {
+  const payload = buildDeviceSavePayload(userId);
+  if (!payload) {
+    return null;
+  }
+  const payloadText = writeJson(payload);
+  return {
+    format: 'moemon-device-save',
+    payload: payloadText,
+    signature: signValue(payloadText, config.deviceSaveSecret),
+  };
+}
+
+function readVerifiedDeviceSave(snapshot) {
+  const payloadText = typeof snapshot?.payload === 'string' ? snapshot.payload : '';
+  const signature = typeof snapshot?.signature === 'string' ? snapshot.signature : '';
+  if (!payloadText || !signature) {
+    throw new Error('Missing device save data.');
+  }
+  if (signValue(payloadText, config.deviceSaveSecret) !== signature) {
+    throw new Error('Device save signature is invalid.');
+  }
+  const payload = readJson(payloadText, null);
+  const version = Number(payload?.version || 0);
+  if (!payload || !SUPPORTED_DEVICE_SAVE_FORMAT_VERSIONS.has(version)) {
+    throw new Error('Device save format is not supported.');
+  }
+  return payload;
+}
+
+function restoreDeviceSaveUser(payload) {
+  const username = normalizeUsername(payload?.user?.username || '');
+  const email = normalizeEmail(payload?.user?.email || '');
+  const passwordHash = typeof payload?.user?.passwordHash === 'string' ? payload.user.passwordHash : '';
+  if (!username || !email || !passwordHash) {
+    throw new Error('Device save is missing account credentials.');
+  }
+
+  const conflictRows = db.prepare('SELECT id FROM users WHERE email = ? OR username_lower = ? ORDER BY id ASC').all(email, username.toLowerCase());
+  const conflictIds = [...new Set(conflictRows.map((entry) => Number(entry.id)).filter((value) => Number.isInteger(value) && value > 0))];
+  if (conflictIds.length > 1) {
+    throw new Error('Restore failed because this email and username already belong to different accounts.');
+  }
+
+  const safeMetaSource = payload.user.meta && typeof payload.user.meta === 'object' ? payload.user.meta : {};
+  const safeMeta = { ...defaultMeta(), ...safeMetaSource };
+  const safeRole = payload.user.role === 'admin' ? 'admin' : 'player';
+  const safeCash = Math.max(0, Math.round(Number(payload.user.cash || 0)));
+  const createdAt = typeof payload.user.createdAt === 'string' && payload.user.createdAt ? payload.user.createdAt : nowIso();
+  const lastLogin = typeof payload.user.lastLogin === 'string' && payload.user.lastLogin ? payload.user.lastLogin : nowIso();
+  let userId = conflictIds[0] || null;
+
+  if (userId) {
+    db.prepare(`
+      UPDATE users
+      SET username = ?, username_lower = ?, email = ?, password_hash = ?, role = ?, cash = ?, meta_json = ?, created_at = ?, last_login = ?, reset_token_hash = NULL, reset_expires = NULL
+      WHERE id = ?
+    `).run(username, username.toLowerCase(), email, passwordHash, safeRole, safeCash, writeJson(safeMeta), createdAt, lastLogin, userId);
+  } else {
+    const result = db.prepare(`
+      INSERT INTO users (username, username_lower, email, password_hash, role, cash, meta_json, created_at, last_login)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(username, username.toLowerCase(), email, passwordHash, safeRole, safeCash, writeJson(safeMeta), createdAt, lastLogin);
+    userId = Number(result.lastInsertRowid);
+  }
+
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+  db.prepare('DELETE FROM collection WHERE user_id = ?').run(userId);
+  db.prepare('DELETE FROM inventories WHERE user_id = ?').run(userId);
+  db.prepare('DELETE FROM runs WHERE user_id = ?').run(userId);
+
+  const collectionIdMap = new Map();
+  for (const entry of payload.collection || []) {
+    if (!entry || typeof entry !== 'object' || !entry.monster) {
+      continue;
+    }
+    const createdAtValue = typeof entry.createdAt === 'string' && entry.createdAt ? entry.createdAt : nowIso();
+    const result = db.prepare('INSERT INTO collection (user_id, monster_json, starter_unlocked, favorite, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(userId, writeJson(entry.monster), entry.starterUnlocked ? 1 : 0, entry.favorite ? 1 : 0, createdAtValue);
+    const legacyCollectionId = Number(entry.id || 0);
+    const restoredCollectionId = Number(result.lastInsertRowid || 0);
+    if (legacyCollectionId > 0 && restoredCollectionId > 0) {
+      collectionIdMap.set(legacyCollectionId, restoredCollectionId);
+    }
+  }
+
+  const remappedMeta = remapCollectionIdsInValue(safeMeta, collectionIdMap);
+  db.prepare('UPDATE users SET meta_json = ? WHERE id = ?').run(writeJson(remappedMeta), userId);
+
+  for (const entry of payload.inventories || []) {
+    if (!entry || typeof entry !== 'object' || !entry.itemSlug) {
+      continue;
+    }
+    const quantity = Math.max(0, Math.floor(Number(entry.quantity || 0)));
+    if (!quantity) {
+      continue;
+    }
+    db.prepare('INSERT INTO inventories (user_id, item_slug, quantity) VALUES (?, ?, ?)')
+      .run(userId, entry.itemSlug, quantity);
+  }
+
+  for (const entry of payload.runs || []) {
+    if (!entry || typeof entry !== 'object' || !entry.run) {
+      continue;
+    }
+    const createdAtValue = typeof entry.createdAt === 'string' && entry.createdAt ? entry.createdAt : nowIso();
+    const updatedAtValue = typeof entry.updatedAt === 'string' && entry.updatedAt ? entry.updatedAt : createdAtValue;
+    const remappedSummary = remapCollectionIdsInValue(entry.summary ?? null, collectionIdMap);
+    const remappedRun = remapCollectionIdsInValue(entry.run, collectionIdMap);
+    db.prepare('INSERT INTO runs (user_id, status, mode, challenge_slug, summary_json, run_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(userId, entry.status || 'active', entry.mode || 'classic', entry.challengeSlug || '', writeJson(remappedSummary), writeJson(remappedRun), createdAtValue, updatedAtValue);
+  }
+
+  return getUserById(userId);
+}
+
+export function restoreSignedDeviceSave(snapshot) {
+  const payload = readVerifiedDeviceSave(snapshot);
+  const user = withWorldBackupSuspended(() => {
+    db.exec('BEGIN');
+    try {
+      const restoredUser = restoreDeviceSaveUser(payload);
+      db.exec('COMMIT');
+      return restoredUser;
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  });
+  scheduleWorldBackup('device-restore');
   return user;
 }
 
@@ -5558,6 +6332,9 @@ function abilityMoveMultiplier(monster, move, encounter) {
   if (ability.slug === 'prism-surge' && monster.types.includes(move.type)) {
     multiplier *= 1.1;
   }
+  if (ability.slug === 'reckless' && move.effect === 'recoil') {
+    multiplier *= 1.18;
+  }
   return multiplier;
 }
 
@@ -5572,7 +6349,7 @@ function secondaryEffectMultiplier(monster) {
   return getMonsterAbility(monster).slug === 'serene-grace' ? 1.8 : 1;
 }
 
-function defensiveAbilityMultiplier(defender, move) {
+function defensiveAbilityMultiplier(defender, move, effectiveness = 1) {
   const ability = getMonsterAbility(defender);
   let multiplier = 1;
   if (ability.slug === 'thick-fat' && (move.type === 'fire' || move.type === 'ice')) {
@@ -5580,6 +6357,9 @@ function defensiveAbilityMultiplier(defender, move) {
   }
   if (ability.slug === 'multiscale' && defender.currentHp === defender.stats.hp) {
     multiplier *= 0.72;
+  }
+  if (ability.slug === 'filter' && effectiveness > 1) {
+    multiplier *= 0.82;
   }
   return multiplier;
 }
@@ -5780,20 +6560,26 @@ function chooseBestEnemyMove(monster, target, encounter = null) {
         baseScore = 16;
       }
     } else {
-      baseScore = (move.power || 0)
-        * stabMultiplier(monster, move)
-        * effectiveness
-        * weatherPowerMultiplier(move.type, encounter)
-        * abilityMoveMultiplier(monster, move, encounter)
-        * moveItemMultiplier(monster, move, effectiveness);
-      if (move.effect === 'debuff-def' && target.stages?.def > -3) {
-        baseScore += 18;
-      }
-      if (move.effect === 'debuff-atk' && target.stages?.atk > -3) {
-        baseScore += 12;
-      }
-      if (move.effect === 'recoil') {
-        baseScore *= hpRatio > 0.45 ? 1.1 : 0.82;
+      if ((move.type === 'ground' && getMonsterAbility(target).slug === 'levitate' && !target.types.includes('flying'))
+        || (move.type === 'water' && getMonsterAbility(target).slug === 'water-absorb')
+        || (move.type === 'electric' && getMonsterAbility(target).slug === 'volt-absorb')) {
+        baseScore = 0;
+      } else {
+        baseScore = (move.power || 0)
+          * stabMultiplier(monster, move)
+          * effectiveness
+          * weatherPowerMultiplier(move.type, encounter)
+          * abilityMoveMultiplier(monster, move, encounter)
+          * moveItemMultiplier(monster, move, effectiveness);
+        if (move.effect === 'debuff-def' && target.stages?.def > -3) {
+          baseScore += 18;
+        }
+        if (move.effect === 'debuff-atk' && target.stages?.atk > -3) {
+          baseScore += 12;
+        }
+        if (move.effect === 'recoil') {
+          baseScore *= hpRatio > 0.45 ? 1.1 : 0.82;
+        }
       }
     }
     if (baseScore > bestScore) {
@@ -6241,7 +7027,7 @@ function generateEncounter(run) {
     log.push(WEATHER_LABELS[weather.type] + ' fills the field.');
   }
 
-  return {
+  const encounter = {
     kind,
     title,
     biome,
@@ -6260,6 +7046,13 @@ function generateEncounter(run) {
     log,
     latestMessage: log[log.length - 1],
   };
+  const activePlayer = run.party[encounter.playerIndex] || null;
+  const activeEnemy = encounter.enemyParty[encounter.enemyIndex] || null;
+  if (activePlayer && activeEnemy) {
+    applySwitchInAbilities(activePlayer, activeEnemy, encounter);
+    applySwitchInAbilities(activeEnemy, activePlayer, encounter);
+  }
+  return encounter;
 }
 
 function addToRunBag(run, itemSlug, quantity = 1) {
@@ -6477,6 +7270,9 @@ function applyMove(attacker, defender, moveState, encounter, side, options = {})
     logLine(encounter, (defender.nickname || defender.name) + ' floated above the Ground-type attack.');
     return;
   }
+  if (triggerDefensiveAbsorbAbility(defender, move, encounter)) {
+    return;
+  }
 
   const effectiveness = typeMultiplier(move.type, defender.types);
   if (effectiveness === 0) {
@@ -6496,7 +7292,7 @@ function applyMove(attacker, defender, moveState, encounter, side, options = {})
     : (encounter.playerDamageBonus || 1);
   const itemMultiplier = moveItemMultiplier(attacker, move, effectiveness);
   const defensiveMultiplier = maybeApplyDefensiveItem(defender, move, effectiveness, encounter);
-  const abilityDefense = defensiveAbilityMultiplier(defender, move);
+  const abilityDefense = defensiveAbilityMultiplier(defender, move, effectiveness);
   let damage = Math.max(1, Math.floor(base
     * stab
     * effectiveness
@@ -6642,6 +7438,11 @@ function handleKnockouts(userId, run, encounter) {
     encounter.enemyIndex += 1;
     if (encounter.enemyIndex < encounter.enemyParty.length) {
       logLine(encounter, `${encounter.title} sends in another monster.`);
+      const incomingEnemy = encounter.enemyParty[encounter.enemyIndex] || null;
+      const activePlayer = run.party[encounter.playerIndex] || null;
+      if (incomingEnemy && activePlayer) {
+        applySwitchInAbilities(incomingEnemy, activePlayer, encounter);
+      }
     }
   }
 
@@ -6657,6 +7458,10 @@ function handleKnockouts(userId, run, encounter) {
     }
     encounter.playerIndex = nextIndex;
     logLine(encounter, `${run.party[nextIndex].nickname || run.party[nextIndex].name} steps back into the fight.`);
+    const activeEnemy = encounter.enemyParty[encounter.enemyIndex] || null;
+    if (activeEnemy) {
+      applySwitchInAbilities(run.party[nextIndex], activeEnemy, encounter);
+    }
     break;
   }
 
@@ -7454,14 +8259,15 @@ export function performRunAction(userId, action) {
       throw new Error('That monster cannot switch in.');
     }
     const current = run.party[encounter.playerIndex];
-    if (current && targetIndex !== encounter.playerIndex && current.currentHp > 0 && getMonsterAbility(current).slug === 'regenerator') {
-      const healed = healMonster(current, Math.max(1, Math.floor(current.stats.hp * 0.2)));
-      if (healed > 0) {
-        logLine(encounter, (current.nickname || current.name) + ' restored HP with Regenerator.');
-      }
+    if (current && targetIndex !== encounter.playerIndex && current.currentHp > 0) {
+      applySwitchOutAbilities(current, encounter);
     }
     encounter.playerIndex = targetIndex;
     logLine(encounter, (run.party[targetIndex].nickname || run.party[targetIndex].name) + ' was switched in.');
+    const activeEnemy = encounter.enemyParty[encounter.enemyIndex] || null;
+    if (activeEnemy) {
+      applySwitchInAbilities(run.party[targetIndex], activeEnemy, encounter);
+    }
     enemyTurn(run, encounter);
     let outcome = handleKnockouts(userId, run, encounter);
     if (!outcome.finished && run.encounter) {
@@ -10831,6 +11637,15 @@ export function purchasePersistentItem(userId, itemSlug, quantity = 1) {
   saveUserMeta(userId, user.meta);
   return getUserById(userId);
 }
+
+
+
+
+
+
+
+
+
 
 
 
