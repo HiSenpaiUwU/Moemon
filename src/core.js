@@ -9212,6 +9212,37 @@ export function createAdmin(email, password, username = 'Administrator') {
   return getUserById(user.id);
 }
 
+async function ensureBootstrapAdminFromEnv() {
+  const email = normalizeEmail(process.env.MOEMON_BOOTSTRAP_ADMIN_EMAIL || '');
+  const password = String(process.env.MOEMON_BOOTSTRAP_ADMIN_PASSWORD || '');
+  const username = normalizeUsername(process.env.MOEMON_BOOTSTRAP_ADMIN_USERNAME || 'Administrator') || 'Administrator';
+  const syncPassword = String(process.env.MOEMON_BOOTSTRAP_ADMIN_SYNC_PASSWORD || '').trim().toLowerCase() === 'true';
+  if (!email) {
+    return null;
+  }
+
+  const existing = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (existing) {
+    db.prepare('UPDATE users SET role = ?, cash = ? WHERE id = ?').run('admin', Math.max(5000, Number(existing.cash || 0)), existing.id);
+    if (password && syncPassword) {
+      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), existing.id);
+    }
+    await flushPendingWorldBackup();
+    return getUserById(existing.id);
+  }
+
+  if (!password) {
+    console.warn('[moemon] Skipping bootstrap admin creation because MOEMON_BOOTSTRAP_ADMIN_PASSWORD is missing.');
+    return null;
+  }
+
+  const user = createAdmin(email, password, username);
+  await flushPendingWorldBackup();
+  return user;
+}
+
+await ensureBootstrapAdminFromEnv();
+
 export function getAdminOverview() {
   const users = listUsers(30);
   const activeRuns = db.prepare('SELECT COUNT(*) as count FROM runs WHERE status = ?').get('active').count;
@@ -12038,3 +12069,4 @@ export function purchasePersistentItem(userId, itemSlug, quantity = 1) {
   saveUserMeta(userId, user.meta);
   return getUserById(userId);
 }
+

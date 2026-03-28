@@ -1511,8 +1511,6 @@ function safeSessionStorageGet(key) {
   }
 }
 
-const DEVICE_SAVE_STORAGE_KEY = 'moemon-device-save';
-
 function safeLocalStorageSet(key, value) {
   try {
     window.localStorage.setItem(key, value);
@@ -1537,30 +1535,207 @@ function safeLocalStorageRemove(key) {
   }
 }
 
-function readStoredDeviceSave() {
-  const raw = safeLocalStorageGet(DEVICE_SAVE_STORAGE_KEY);
-  if (!raw) {
+const LEGACY_DEVICE_SAVE_STORAGE_KEY = 'moemon-device-save';
+const DEVICE_SAVE_STORAGE_KEY = 'moemon-device-saves';
+const DEVICE_SAVE_STORAGE_VERSION = 1;
+const DEVICE_SAVE_MAX_ENTRIES = 12;
+
+function parseStoredDeviceSaveEnvelope(rawValue) {
+  if (!rawValue || typeof rawValue !== 'string') {
     return null;
   }
   try {
-    const envelope = JSON.parse(raw);
+    const envelope = JSON.parse(rawValue);
     if (!envelope || typeof envelope.payload !== 'string' || typeof envelope.signature !== 'string') {
-      safeLocalStorageRemove(DEVICE_SAVE_STORAGE_KEY);
       return null;
     }
     const snapshot = JSON.parse(envelope.payload || '{}');
+    if (!snapshot || typeof snapshot !== 'object') {
+      return null;
+    }
     return { envelope, snapshot };
   } catch {
-    safeLocalStorageRemove(DEVICE_SAVE_STORAGE_KEY);
     return null;
   }
 }
 
+function normalizeDeviceSaveValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function deviceSaveIdentity(snapshot) {
+  const username = String(snapshot?.user?.username || '').trim();
+  const email = String(snapshot?.user?.email || '').trim();
+  const normalizedUsername = normalizeDeviceSaveValue(username);
+  const normalizedEmail = normalizeDeviceSaveValue(email);
+  return {
+    username,
+    email,
+    normalizedUsername,
+    normalizedEmail,
+    key: normalizedEmail || normalizedUsername,
+  };
+}
+
+function buildStoredDeviceSaveEntry(envelope, snapshot, savedAt = '') {
+  const identity = deviceSaveIdentity(snapshot);
+  if (!identity.key) {
+    return null;
+  }
+  return {
+    key: identity.key,
+    username: identity.username,
+    email: identity.email,
+    normalizedUsername: identity.normalizedUsername,
+    normalizedEmail: identity.normalizedEmail,
+    envelope,
+    snapshot,
+    savedAt: savedAt || snapshot?.issuedAt || new Date().toISOString(),
+  };
+}
+
+function matchesDeviceSaveMode(entry, mode = '') {
+  const normalizedMode = String(mode || '').trim().toLowerCase();
+  if (!normalizedMode) {
+    return true;
+  }
+  const role = String(entry?.snapshot?.user?.role || '').trim().toLowerCase();
+  if (normalizedMode === 'admin') {
+    return role === 'admin';
+  }
+  if (normalizedMode === 'player') {
+    return role !== 'admin';
+  }
+  return true;
+}
+
+function serializeStoredDeviceSaveEntries(entries) {
+  return JSON.stringify({
+    version: DEVICE_SAVE_STORAGE_VERSION,
+    entries: entries.map((entry) => ({
+      key: entry.key,
+      savedAt: entry.savedAt,
+      envelope: entry.envelope,
+    })),
+  });
+}
+
+function writeStoredDeviceSaveEntries(entries) {
+  if (!Array.isArray(entries) || !entries.length) {
+    safeLocalStorageRemove(DEVICE_SAVE_STORAGE_KEY);
+    safeLocalStorageRemove(LEGACY_DEVICE_SAVE_STORAGE_KEY);
+    return;
+  }
+  safeLocalStorageSet(DEVICE_SAVE_STORAGE_KEY, serializeStoredDeviceSaveEntries(entries));
+  safeLocalStorageRemove(LEGACY_DEVICE_SAVE_STORAGE_KEY);
+}
+
+function normalizeStoredDeviceSaveEntries(rawEntries) {
+  const entries = [];
+  for (const rawEntry of rawEntries || []) {
+    const envelope = rawEntry?.envelope || rawEntry;
+    const parsed = parseStoredDeviceSaveEnvelope(JSON.stringify(envelope));
+    if (!parsed) {
+      continue;
+    }
+    const entry = buildStoredDeviceSaveEntry(parsed.envelope, parsed.snapshot, rawEntry?.savedAt || parsed.snapshot?.issuedAt || '');
+    if (entry) {
+      entries.push(entry);
+    }
+  }
+  return entries
+    .sort((left, right) => String(right.savedAt || '').localeCompare(String(left.savedAt || '')))
+    .slice(0, DEVICE_SAVE_MAX_ENTRIES);
+}
+
+function migrateLegacyStoredDeviceSave() {
+  const legacyRaw = safeLocalStorageGet(LEGACY_DEVICE_SAVE_STORAGE_KEY);
+  if (!legacyRaw) {
+    return [];
+  }
+  const parsed = parseStoredDeviceSaveEnvelope(legacyRaw);
+  if (!parsed) {
+    safeLocalStorageRemove(LEGACY_DEVICE_SAVE_STORAGE_KEY);
+    return [];
+  }
+  const entry = buildStoredDeviceSaveEntry(parsed.envelope, parsed.snapshot, parsed.snapshot?.issuedAt || '');
+  if (!entry) {
+    safeLocalStorageRemove(LEGACY_DEVICE_SAVE_STORAGE_KEY);
+    return [];
+  }
+  writeStoredDeviceSaveEntries([entry]);
+  return [entry];
+}
+
+function readStoredDeviceSaves() {
+  const raw = safeLocalStorageGet(DEVICE_SAVE_STORAGE_KEY);
+  if (!raw) {
+    return migrateLegacyStoredDeviceSave();
+  }
+  try {
+    const payload = JSON.parse(raw);
+    if (!payload || Number(payload.version || 0) !== DEVICE_SAVE_STORAGE_VERSION || !Array.isArray(payload.entries)) {
+      safeLocalStorageRemove(DEVICE_SAVE_STORAGE_KEY);
+      return migrateLegacyStoredDeviceSave();
+    }
+    const normalized = normalizeStoredDeviceSaveEntries(payload.entries);
+    if (!normalized.length) {
+      safeLocalStorageRemove(DEVICE_SAVE_STORAGE_KEY);
+      return migrateLegacyStoredDeviceSave();
+    }
+    if (normalized.length !== payload.entries.length) {
+      writeStoredDeviceSaveEntries(normalized);
+    }
+    return normalized;
+  } catch {
+    safeLocalStorageRemove(DEVICE_SAVE_STORAGE_KEY);
+    return migrateLegacyStoredDeviceSave();
+  }
+}
+
+function upsertStoredDeviceSave(envelope) {
+  const parsed = parseStoredDeviceSaveEnvelope(typeof envelope === 'string' ? envelope : JSON.stringify(envelope || {}));
+  if (!parsed) {
+    return readStoredDeviceSaves();
+  }
+  const nextEntry = buildStoredDeviceSaveEntry(parsed.envelope, parsed.snapshot, parsed.snapshot?.issuedAt || new Date().toISOString());
+  if (!nextEntry) {
+    return readStoredDeviceSaves();
+  }
+  const existing = readStoredDeviceSaves().filter((entry) => entry.key !== nextEntry.key);
+  const nextEntries = [nextEntry, ...existing].slice(0, DEVICE_SAVE_MAX_ENTRIES);
+  writeStoredDeviceSaveEntries(nextEntries);
+  return nextEntries;
+}
+
+function matchStoredDeviceSave(loginValue, entries = readStoredDeviceSaves()) {
+  const normalizedLogin = normalizeDeviceSaveValue(loginValue);
+  if (!normalizedLogin) {
+    return entries.length === 1 ? entries[0] : null;
+  }
+  return entries.find((entry) => entry.normalizedEmail === normalizedLogin || entry.normalizedUsername === normalizedLogin) || null;
+}
+
 function hydrateDeviceSaveInputs(root = document) {
-  const saved = readStoredDeviceSave();
-  const payload = saved?.envelope ? JSON.stringify(saved.envelope) : '';
-  root.querySelectorAll('[data-device-save-input]').forEach((input) => {
-    input.value = payload;
+  const entries = readStoredDeviceSaves();
+  root.querySelectorAll('form').forEach((form) => {
+    const backupInput = form.querySelector('[data-device-save-input]');
+    if (!backupInput) {
+      return;
+    }
+    const mode = backupInput.dataset.deviceSaveMode || '';
+    const availableEntries = entries.filter((entry) => matchesDeviceSaveMode(entry, mode));
+    const loginInput = form.querySelector('input[name="login"]');
+    const syncBackupInput = () => {
+      const matched = matchStoredDeviceSave(loginInput?.value || '', availableEntries);
+      backupInput.value = matched?.envelope ? JSON.stringify(matched.envelope) : '';
+    };
+    syncBackupInput();
+    if (loginInput && form.dataset.deviceSaveHydrated !== 'true') {
+      loginInput.addEventListener('input', syncBackupInput);
+      loginInput.addEventListener('change', syncBackupInput);
+    }
+    form.dataset.deviceSaveHydrated = 'true';
   });
 }
 
@@ -1568,19 +1743,18 @@ function syncDeviceSaveSnapshot() {
   const node = document.getElementById('moemon-device-save');
   const raw = node?.textContent || '';
   if (!raw.trim()) {
-    return;
+    return readStoredDeviceSaves();
   }
-  safeLocalStorageSet(DEVICE_SAVE_STORAGE_KEY, raw);
+  return upsertStoredDeviceSave(raw);
 }
 
-async function restoreStoredDeviceSave(button, status) {
-  const saved = readStoredDeviceSave();
-  if (!saved?.envelope) {
-    status.textContent = 'No local save was found on this device.';
+async function restoreStoredDeviceSave(entry, button, status) {
+  if (!entry?.envelope) {
+    status.textContent = 'That local save is no longer available.';
     return;
   }
   button.disabled = true;
-  status.textContent = 'Restoring your saved account...';
+  status.textContent = `Restoring ${entry.username || 'your saved account'}...`;
   try {
     const response = await fetch('/auth/device-restore', {
       method: 'POST',
@@ -1588,7 +1762,7 @@ async function restoreStoredDeviceSave(button, status) {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ backup: saved.envelope }),
+      body: JSON.stringify({ backup: entry.envelope }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok) {
@@ -1603,51 +1777,81 @@ async function restoreStoredDeviceSave(button, status) {
 }
 
 function initDeviceSaveRestore(root = document) {
-  const saved = readStoredDeviceSave();
+  const entries = readStoredDeviceSaves();
   root.querySelectorAll('[data-device-restore-slot]').forEach((slot) => {
     slot.replaceChildren();
-    if (!saved?.envelope) {
+    const mode = slot.dataset.deviceRestoreMode || '';
+    const visibleEntries = entries.filter((entry) => matchesDeviceSaveMode(entry, mode));
+    if (!visibleEntries.length) {
       slot.hidden = true;
       return;
     }
 
-    const snapshot = saved.snapshot || {};
-    const username = snapshot.user?.username || 'saved trainer';
-    const syncedAt = snapshot.issuedAt ? new Date(snapshot.issuedAt) : null;
-    const syncedLabel = syncedAt && !Number.isNaN(syncedAt.getTime()) ? syncedAt.toLocaleString() : 'this device';
+    visibleEntries.forEach((entry) => {
+      const snapshot = entry.snapshot || {};
+      const username = entry.username || snapshot.user?.username || 'saved trainer';
+      const email = entry.email || snapshot.user?.email || '';
+      const syncedAt = snapshot.issuedAt ? new Date(snapshot.issuedAt) : null;
+      const syncedLabel = syncedAt && !Number.isNaN(syncedAt.getTime()) ? syncedAt.toLocaleString() : 'this device';
 
-    const card = document.createElement('section');
-    card.className = 'device-restore-card panelish';
+      const card = document.createElement('section');
+      card.className = 'device-restore-card panelish';
 
-    const heading = document.createElement('strong');
-    heading.textContent = 'Restore local save';
-    card.appendChild(heading);
+      const heading = document.createElement('strong');
+      heading.textContent = `Restore ${username}`;
+      card.appendChild(heading);
 
-    const copy = document.createElement('p');
-    copy.className = 'muted';
-    copy.textContent = `A backup for ${username} is stored on this device.`;
-    card.appendChild(copy);
+      const copy = document.createElement('p');
+      copy.className = 'muted';
+      copy.textContent = email
+        ? `${username} is stored on this device as ${email}.`
+        : `A backup for ${username} is stored on this device.`;
+      card.appendChild(copy);
 
-    const actions = document.createElement('div');
-    actions.className = 'button-row';
-    const button = document.createElement('button');
-    button.className = 'button accent';
-    button.type = 'button';
-    button.textContent = `Restore ${username}`;
-    actions.appendChild(button);
-    card.appendChild(actions);
+      const actions = document.createElement('div');
+      actions.className = 'button-row';
 
-    const status = document.createElement('p');
-    status.className = 'muted device-restore-status';
-    status.textContent = `Last synced ${syncedLabel}.`;
-    card.appendChild(status);
+      const restoreButton = document.createElement('button');
+      restoreButton.className = 'button accent';
+      restoreButton.type = 'button';
+      restoreButton.textContent = `Restore ${username}`;
+      actions.appendChild(restoreButton);
 
-    button.addEventListener('click', () => {
-      restoreStoredDeviceSave(button, status);
+      const useButton = document.createElement('button');
+      useButton.className = 'button ghost';
+      useButton.type = 'button';
+      useButton.textContent = 'Use For Login';
+      actions.appendChild(useButton);
+
+      card.appendChild(actions);
+
+      const status = document.createElement('p');
+      status.className = 'muted device-restore-status';
+      status.textContent = `Last synced ${syncedLabel}.`;
+      card.appendChild(status);
+
+      restoreButton.addEventListener('click', () => {
+        restoreStoredDeviceSave(entry, restoreButton, status);
+      });
+
+      useButton.addEventListener('click', () => {
+        const scope = slot.closest('.auth-card') || root;
+        const loginField = scope.querySelector('input[name="login"]');
+        const backupField = scope.querySelector('[data-device-save-input]');
+        if (loginField) {
+          loginField.value = entry.email || entry.username || '';
+          loginField.dispatchEvent(new Event('input', { bubbles: true }));
+          loginField.focus();
+        }
+        if (backupField) {
+          backupField.value = JSON.stringify(entry.envelope);
+        }
+        status.textContent = `${username} is ready to sign in from this browser.`;
+      });
+
+      slot.hidden = false;
+      slot.appendChild(card);
     });
-
-    slot.hidden = false;
-    slot.appendChild(card);
   });
 }
 
@@ -2085,3 +2289,8 @@ syncDeviceSaveSnapshot();
 hydrateDeviceSaveInputs();
 initDeviceSaveRestore();
 initSoftNavigation();
+
+
+
+
+

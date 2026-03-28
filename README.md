@@ -47,6 +47,8 @@ If SMTP is not configured, the app still generates a reset link and prints it to
 
 Admin controls are available in the `/admin` page.
 
+For Vercel, set `MOEMON_BOOTSTRAP_ADMIN_EMAIL`, `MOEMON_BOOTSTRAP_ADMIN_PASSWORD`, and optionally `MOEMON_BOOTSTRAP_ADMIN_USERNAME`, then redeploy. If that email already exists, the account is promoted to admin. Passwords are only re-synced on startup when `MOEMON_BOOTSTRAP_ADMIN_SYNC_PASSWORD=true`.
+
 CLI commands are also available:
 
 ```powershell
@@ -67,3 +69,4 @@ npm test
 ```
 
 That check boots the server, registers a fresh account, opens the hub, starts a run, and verifies the battle screen renders.
+

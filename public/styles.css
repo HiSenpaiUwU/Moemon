@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #0f1720;
   --panel: rgba(11, 19, 28, 0.82);
   --panel-strong: rgba(16, 27, 40, 0.95);
@@ -3348,6 +3348,8 @@ textarea {
 }
 
 .device-restore-slot {
+  display: grid;
+  gap: 12px;
   margin-top: 16px;
 }
 
@@ -4588,4 +4590,5 @@ body.page-market .mobile-command-trade {
     gap: 8px;
   }
 }
+
 

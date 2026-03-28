@@ -155,6 +155,26 @@ function loginMatchesSignedDeviceSave(loginValue, deviceSave) {
   }
 }
 
+async function authenticateWithOptionalDeviceRestore(form) {
+  let signedIn = authenticateUser(form.data.login, form.data.password);
+  if (!signedIn) {
+    const deviceBackup = parseDeviceBackupField(form.data.deviceBackup);
+    if (loginMatchesSignedDeviceSave(form.data.login, deviceBackup)) {
+      try {
+        restoreSignedDeviceSave(deviceBackup?.backup || deviceBackup);
+        signedIn = authenticateUser(form.data.login, form.data.password);
+      } catch (error) {
+        console.error('[moemon] Automatic device restore during login failed:', error);
+      }
+    }
+  }
+  return signedIn;
+}
+
+function isAdminAccount(user) {
+  return user?.role === 'admin';
+}
+
 function parseCookies(request) {
   const header = request.headers.cookie || '';
   const cookies = {};
@@ -689,13 +709,13 @@ function layout({ title, user, flash, body, wide = false, world = null }) {
   </html>`;
 }
 
-function authCard(title, intro, fields, footer = '') {
+function authCard(title, intro, fields, footer = '', restoreSlotAttributes = '') {
   return `
     <section class="auth-card panel">
       <h1>${escapeHtml(title)}</h1>
       <p class="muted">${escapeHtml(intro)}</p>
       ${fields}
-      <div class="device-restore-slot" data-device-restore-slot hidden></div>
+      <div class="device-restore-slot" data-device-restore-slot ${restoreSlotAttributes} hidden></div>
       ${footer}
     </section>
   `;
@@ -720,7 +740,8 @@ function renderLanding() {
         <p class="lead">Moemon Arena is a full-stack browser game foundation inspired by PokeRogue's progression flow: starter drafting, wave battles, between-wave rewards, a live shop, persistent accounts, saveable runs, collection storage, and admin controls.</p>
         <div class="hero-actions">
           <a class="button primary" href="/register">Create Account</a>
-          <a class="button ghost" href="/login">Sign In</a>
+          <a class="button ghost" href="/login">Player Login</a>
+          <a class="button warning" href="/admin-login">Admin Login</a>
           <a class="button accent" href="#landing-loop">See Core Loop</a>
         </div>
         <div class="badge-row landing-chip-row">
@@ -5593,44 +5614,75 @@ export async function handleRequest(request, response) {
 
     if (request.method === 'GET' && pathname === '/login') {
       renderPage(response, {
-        title: 'Login',
+        title: 'Player Login',
         user,
         flash,
-        body: authCard('Sign in', 'Use your username or email to continue a saved account. Same-browser backups can restore missing Vercel accounts automatically.', `
+        body: authCard('Player Sign In', 'Use your username or email to continue a saved player account. Same-browser backups can restore multiple saved accounts automatically when the server copy is missing.', `
           <form method="post" action="/login" class="stack-form">
             <label><span>Username or email</span><input type="text" name="login" required /></label>
             <label><span>Password</span><input type="password" name="password" required /></label>
-            <input type="hidden" name="deviceBackup" value="" data-device-save-input />
-            <button class="button primary" type="submit">Login</button>
+            <input type="hidden" name="deviceBackup" value="" data-device-save-input data-device-save-mode="player" />
+            <button class="button primary" type="submit">Player Login</button>
           </form>
-        `, '<p class="muted"><a href="/forgot-password">Need a reset link?</a></p>'),
+        `, '<p class="muted"><a href="/admin-login">Admin account?</a> <a href="/forgot-password">Need a reset link?</a></p>', 'data-device-restore-mode="player"'),
+      });
+      return;
+    }
+
+    if (request.method === 'GET' && pathname === '/admin-login') {
+      renderPage(response, {
+        title: 'Admin Login',
+        user,
+        flash,
+        body: authCard('Admin Sign In', 'Use the admin account email or username here. Player accounts are blocked from this route.', `
+          <form method="post" action="/admin-login" class="stack-form">
+            <label><span>Admin username or email</span><input type="text" name="login" required /></label>
+            <label><span>Password</span><input type="password" name="password" required /></label>
+            <input type="hidden" name="deviceBackup" value="" data-device-save-input data-device-save-mode="admin" />
+            <button class="button warning" type="submit">Admin Login</button>
+          </form>
+        `, '<p class="muted"><a href="/login">Player login</a> <a href="/forgot-password">Need a reset link?</a></p>', 'data-device-restore-mode="admin"'),
       });
       return;
     }
 
     if (request.method === 'POST' && pathname === '/login') {
       const form = await parseForm(request);
-      let signedIn = authenticateUser(form.data.login, form.data.password);
-      if (!signedIn) {
-        const deviceBackup = parseDeviceBackupField(form.data.deviceBackup);
-        if (loginMatchesSignedDeviceSave(form.data.login, deviceBackup)) {
-          try {
-            restoreSignedDeviceSave(deviceBackup?.backup || deviceBackup);
-            signedIn = authenticateUser(form.data.login, form.data.password);
-          } catch (error) {
-            console.error('[moemon] Automatic device restore during login failed:', error);
-          }
-        }
-      }
+      const signedIn = await authenticateWithOptionalDeviceRestore(form);
       if (!signedIn) {
         setFlash(response, 'Invalid login credentials.', 'error');
         redirect(response, '/login');
+        return;
+      }
+      if (isAdminAccount(signedIn)) {
+        setFlash(response, 'Admin accounts must use the admin login page.', 'warning');
+        redirect(response, '/admin-login');
         return;
       }
       const token = createSession(signedIn.id);
       setCookie(response, config.sessionCookieName, token, { maxAge: config.sessionTtlHours * 3600 });
       setFlash(response, 'Signed in successfully.', 'success');
       redirect(response, '/hub');
+      return;
+    }
+
+    if (request.method === 'POST' && pathname === '/admin-login') {
+      const form = await parseForm(request);
+      const signedIn = await authenticateWithOptionalDeviceRestore(form);
+      if (!signedIn) {
+        setFlash(response, 'Invalid admin credentials.', 'error');
+        redirect(response, '/admin-login');
+        return;
+      }
+      if (!isAdminAccount(signedIn)) {
+        setFlash(response, 'This account is not an admin account.', 'error');
+        redirect(response, '/login');
+        return;
+      }
+      const token = createSession(signedIn.id);
+      setCookie(response, config.sessionCookieName, token, { maxAge: config.sessionTtlHours * 3600 });
+      setFlash(response, 'Admin signed in successfully.', 'success');
+      redirect(response, '/admin');
       return;
     }
 
@@ -6418,3 +6470,9 @@ if (isDirectRun) {
     console.log(`Moemon Arena listening on ${config.appOrigin}`);
   });
 }
+
+
+
+
+
+
