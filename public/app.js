@@ -1237,10 +1237,10 @@ function initBattleLab() {
         <p class="eyebrow">${label}</p>
         <h3>${fighter.name}</h3>
         <div class="badge-row compact-row">${fighter.types.map((type) => `<span class="badge badge-${type}">${titleLabel(type)}</span>`).join(' ')}</div>
-        <p class="muted">Lv ${fighter.level} · Total ${statTotal(fighter.stats)}</p>
+        <p class="muted">Lv ${fighter.level} ï¿½ Total ${statTotal(fighter.stats)}</p>
         <div class="health hp-bar"><span style="width:${hpPercent}%"></span></div>
-        <p class="battle-lab-statline">HP ${fighter.hp}/${fighter.stats.hp}${fighter.defending ? ' · Guarding' : ''}</p>
-        <p class="battle-lab-statline">Atk ${fighter.stats.atk} · Def ${fighter.stats.def} · SpA ${fighter.stats.spa} · SpD ${fighter.stats.spd} · Spe ${fighter.stats.spe}</p>
+        <p class="battle-lab-statline">HP ${fighter.hp}/${fighter.stats.hp}${fighter.defending ? ' ï¿½ Guarding' : ''}</p>
+        <p class="battle-lab-statline">Atk ${fighter.stats.atk} ï¿½ Def ${fighter.stats.def} ï¿½ SpA ${fighter.stats.spa} ï¿½ SpD ${fighter.stats.spd} ï¿½ Spe ${fighter.stats.spe}</p>
       `;
     };
     const setLog = (message) => {
@@ -1556,6 +1556,14 @@ function readStoredDeviceSave() {
   }
 }
 
+function hydrateDeviceSaveInputs(root = document) {
+  const saved = readStoredDeviceSave();
+  const payload = saved?.envelope ? JSON.stringify(saved.envelope) : '';
+  root.querySelectorAll('[data-device-save-input]').forEach((input) => {
+    input.value = payload;
+  });
+}
+
 function syncDeviceSaveSnapshot() {
   const node = document.getElementById('moemon-device-save');
   const raw = node?.textContent || '';
@@ -1770,6 +1778,7 @@ function hydrateMoemonPage() {
   initBattleLab();
   initSearchStories();
   syncDeviceSaveSnapshot();
+  hydrateDeviceSaveInputs();
   initDeviceSaveRestore();
 }
 
@@ -2073,9 +2082,6 @@ function initSoftNavigation() {
 
 initCommandMenus();
 syncDeviceSaveSnapshot();
+hydrateDeviceSaveInputs();
 initDeviceSaveRestore();
 initSoftNavigation();
-
-
-
-

@@ -45,6 +45,11 @@ try {
     throw 'Admin shortcut did not render for the first admin account.'
   }
 
+  $deviceSaveMatch = [regex]::Match($hub.Content, '<script id="moemon-device-save" type="application/json">(?<payload>.*?)</script>', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+  if (-not $deviceSaveMatch.Success) {
+    throw 'Device save payload did not render for the signed-in account.'
+  }
+  $deviceSavePayload = $deviceSaveMatch.Groups['payload'].Value
   $events = Invoke-WebRequest -Uri "$root/events" -WebSession $session -UseBasicParsing
   if ($events.Content -notlike '*Limited Banner Rotations*') {
     throw 'Events page did not render.'
@@ -94,15 +99,10 @@ finally {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
   }
   if (Test-Path $tempRoot) {
-    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    if ($env:MOEMON_KEEP_SMOKE_TEMP) {
+      Write-Output "Smoke temp preserved at $tempRoot"
+    } else {
+      Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
   }
 }
-
-
-
-
-
-
-
-
-

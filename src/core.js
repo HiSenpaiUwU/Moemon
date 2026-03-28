@@ -38,6 +38,10 @@ const inferredDeviceSaveSecret = process.env.MOEMON_DEVICE_SAVE_SECRET
 const defaultWorldBackupPath = process.env.MOEMON_WORLD_BACKUP_PATH
   || process.env.WORLD_BACKUP_PATH
   || (process.env.VERCEL ? path.join('/tmp', 'moemon-world-backup.json') : path.join(process.cwd(), 'data', 'world-backup.json'));
+const defaultWorldBackupKvRestUrl = process.env.MOEMON_WORLD_BACKUP_KV_REST_URL || process.env.KV_REST_API_URL || '';
+const defaultWorldBackupKvRestToken = process.env.MOEMON_WORLD_BACKUP_KV_REST_TOKEN || process.env.KV_REST_API_TOKEN || '';
+const defaultWorldBackupKvKey = process.env.MOEMON_WORLD_BACKUP_KV_KEY || 'moemon:world-backup';
+const inferredWorldBackupWriteMode = process.env.MOEMON_WORLD_BACKUP_WRITE_MODE || (process.env.VERCEL ? 'request' : 'timer');
 
 export const config = {
   port: Number(process.env.PORT || 3000),
@@ -46,6 +50,10 @@ export const config = {
   sessionTtlHours: Number(process.env.SESSION_TTL_HOURS || 168),
   deviceSaveSecret: inferredDeviceSaveSecret,
   worldBackupPath: defaultWorldBackupPath,
+  worldBackupKvRestUrl: defaultWorldBackupKvRestUrl,
+  worldBackupKvRestToken: defaultWorldBackupKvRestToken,
+  worldBackupKvKey: defaultWorldBackupKvKey,
+  worldBackupWriteMode: inferredWorldBackupWriteMode,
   smtpHost: process.env.SMTP_HOST || '',
   smtpPort: Number(process.env.SMTP_PORT || 465),
   smtpUser: process.env.SMTP_USER || '',
@@ -3674,28 +3682,42 @@ const WORLD_BACKUP_TABLES = ['users', 'sessions', 'collection', 'inventories', '
 let worldBackupTimer = null;
 let worldBackupPendingReason = 'startup-sync';
 let worldBackupSuspended = 0;
+let worldBackupDirty = false;
+let worldBackupFlushPromise = null;
+
+function worldBackupFileEnabled() {
+  return typeof config.worldBackupPath === 'string' && config.worldBackupPath.trim().length > 0;
+}
+
+function worldBackupKvEnabled() {
+  return typeof config.worldBackupKvRestUrl === 'string'
+    && config.worldBackupKvRestUrl.trim().length > 0
+    && typeof config.worldBackupKvRestToken === 'string'
+    && config.worldBackupKvRestToken.trim().length > 0;
+}
 
 function worldBackupEnabled() {
-  return typeof config.worldBackupPath === 'string' && config.worldBackupPath.trim().length > 0;
+  return worldBackupFileEnabled() || worldBackupKvEnabled();
+}
+
+function worldBackupFlushesPerRequest() {
+  return config.worldBackupWriteMode === 'request';
 }
 
 function scheduleWorldBackup(reason = 'db-mutation') {
   if (!worldBackupEnabled() || worldBackupSuspended > 0) {
     return;
   }
+  worldBackupDirty = true;
   worldBackupPendingReason = reason || worldBackupPendingReason || 'db-mutation';
-  if (worldBackupTimer) {
+  if (worldBackupFlushesPerRequest() || worldBackupTimer) {
     return;
   }
   worldBackupTimer = setTimeout(() => {
     worldBackupTimer = null;
-    const pendingReason = worldBackupPendingReason || 'db-mutation';
-    worldBackupPendingReason = 'db-mutation';
-    try {
-      writeWorldBackupSnapshot(pendingReason);
-    } catch (error) {
+    flushPendingWorldBackup().catch((error) => {
       console.error('[moemon] Failed to write world backup snapshot:', error);
-    }
+    });
   }, 150);
   worldBackupTimer.unref?.();
 }
@@ -3725,22 +3747,59 @@ function buildWorldBackupPayload(reason = 'db-mutation') {
   };
 }
 
-function writeWorldBackupSnapshot(reason = 'db-mutation') {
-  if (!worldBackupEnabled()) {
-    return;
-  }
+function writeWorldBackupFileSnapshot(snapshotText) {
   const snapshotPath = config.worldBackupPath;
   fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
   const tempPath = `${snapshotPath}.tmp`;
-  fs.writeFileSync(tempPath, writeJson(buildWorldBackupPayload(reason)), 'utf8');
+  fs.writeFileSync(tempPath, snapshotText, 'utf8');
   if (fs.existsSync(snapshotPath)) {
     fs.rmSync(snapshotPath, { force: true });
   }
   fs.renameSync(tempPath, snapshotPath);
 }
 
-function readWorldBackupSnapshot() {
+async function runWorldBackupKvCommand(command, ...args) {
+  const response = await fetch(config.worldBackupKvRestUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.worldBackupKvRestToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify([command, ...args]),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.error) {
+    throw new Error(payload?.error || `KV backup command failed with ${response.status}.`);
+  }
+  return payload.result ?? null;
+}
+
+async function writeWorldBackupSnapshot(reason = 'db-mutation') {
   if (!worldBackupEnabled()) {
+    return;
+  }
+  const snapshotText = writeJson(buildWorldBackupPayload(reason));
+  if (worldBackupFileEnabled()) {
+    writeWorldBackupFileSnapshot(snapshotText);
+  }
+  if (worldBackupKvEnabled()) {
+    await runWorldBackupKvCommand('SET', config.worldBackupKvKey, snapshotText);
+  }
+}
+
+function parseWorldBackupSnapshotText(snapshotText) {
+  if (typeof snapshotText !== 'string' || !snapshotText.trim()) {
+    return null;
+  }
+  const snapshot = readJson(snapshotText, null);
+  if (!snapshot || Number(snapshot.version || 0) !== WORLD_BACKUP_FORMAT_VERSION) {
+    return null;
+  }
+  return snapshot;
+}
+
+function readWorldBackupFileSnapshot() {
+  if (!worldBackupFileEnabled()) {
     return null;
   }
   const snapshotPath = config.worldBackupPath;
@@ -3748,15 +3807,28 @@ function readWorldBackupSnapshot() {
     return null;
   }
   try {
-    const snapshot = readJson(fs.readFileSync(snapshotPath, 'utf8'), null);
-    if (!snapshot || Number(snapshot.version || 0) !== WORLD_BACKUP_FORMAT_VERSION) {
-      return null;
-    }
-    return snapshot;
+    return parseWorldBackupSnapshotText(fs.readFileSync(snapshotPath, 'utf8'));
   } catch (error) {
     console.error('[moemon] Failed to read world backup snapshot:', error);
     return null;
   }
+}
+
+async function readWorldBackupSnapshot() {
+  if (!worldBackupEnabled()) {
+    return null;
+  }
+  if (worldBackupKvEnabled()) {
+    try {
+      const snapshot = parseWorldBackupSnapshotText(await runWorldBackupKvCommand('GET', config.worldBackupKvKey));
+      if (snapshot) {
+        return snapshot;
+      }
+    } catch (error) {
+      console.error('[moemon] Failed to read world backup snapshot from KV:', error);
+    }
+  }
+  return readWorldBackupFileSnapshot();
 }
 
 function restoreWorldBackupSnapshot(snapshot) {
@@ -3878,10 +3950,10 @@ function restoreWorldBackupSnapshot(snapshot) {
       for (const row of snapshot.chatMessages || []) {
         insertChatMessage.run(
           Number(row.id),
-          row.room_type,
+          row.room_type || 'global',
           Number(row.sender_user_id),
           row.target_user_id == null ? null : Number(row.target_user_id),
-          row.body,
+          row.body || '',
           row.created_at || nowIso(),
           row.image_url ?? null,
           row.link_url ?? null,
@@ -3896,7 +3968,7 @@ function restoreWorldBackupSnapshot(snapshot) {
     }
   });
 
-  writeWorldBackupSnapshot('restored-world-backup');
+  scheduleWorldBackup('restored-world-backup');
 }
 
 function isWorldBackupMutationSql(sqlText) {
@@ -3915,31 +3987,76 @@ function installWorldBackupHooks() {
       return statement;
     }
     const originalRun = statement.run.bind(statement);
-    statement.run = (...params) => {
-      const result = originalRun(...params);
-      scheduleWorldBackup('db-mutation');
-      return result;
-    };
-    return statement;
+    return new Proxy(statement, {
+      get(target, prop, receiver) {
+        if (prop === 'run') {
+          return (...params) => {
+            const result = originalRun(...params);
+            scheduleWorldBackup('db-mutation');
+            return result;
+          };
+        }
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
   };
 }
 
-installWorldBackupHooks();
+export async function flushPendingWorldBackup() {
+  if (!worldBackupEnabled() || worldBackupSuspended > 0) {
+    return;
+  }
+  if (worldBackupTimer) {
+    clearTimeout(worldBackupTimer);
+    worldBackupTimer = null;
+  }
+  if (!worldBackupDirty) {
+    return worldBackupFlushPromise || null;
+  }
+  if (worldBackupFlushPromise) {
+    return worldBackupFlushPromise;
+  }
 
-const bootstrapUserCount = Number(db.prepare('SELECT COUNT(*) AS count FROM users').get()?.count || 0);
-if (bootstrapUserCount > 0) {
-  scheduleWorldBackup('startup-sync');
-} else {
-  const startupSnapshot = readWorldBackupSnapshot();
+  const pendingReason = worldBackupPendingReason || 'db-mutation';
+  worldBackupPendingReason = 'db-mutation';
+  worldBackupDirty = false;
+  worldBackupFlushPromise = (async () => {
+    try {
+      await writeWorldBackupSnapshot(pendingReason);
+    } catch (error) {
+      worldBackupDirty = true;
+      worldBackupPendingReason = pendingReason;
+      throw error;
+    } finally {
+      worldBackupFlushPromise = null;
+      if (worldBackupDirty && !worldBackupFlushesPerRequest()) {
+        scheduleWorldBackup(worldBackupPendingReason);
+      }
+    }
+  })();
+  return worldBackupFlushPromise;
+}
+
+async function initializeWorldBackupState() {
+  const bootstrapUserCount = Number(db.prepare('SELECT COUNT(*) AS count FROM users').get()?.count || 0);
+  if (bootstrapUserCount > 0) {
+    scheduleWorldBackup('startup-sync');
+    return;
+  }
+  const startupSnapshot = await readWorldBackupSnapshot();
   if (startupSnapshot) {
     try {
       restoreWorldBackupSnapshot(startupSnapshot);
+      await flushPendingWorldBackup();
     } catch (error) {
       console.error('[moemon] Failed to restore world backup snapshot:', error);
     }
   }
 }
 
+installWorldBackupHooks();
+await initializeWorldBackupState();
 function normalizeEmail(value) {
   return String(value ?? '').trim().toLowerCase();
 }
@@ -4444,6 +4561,15 @@ export function createSignedDeviceSave(userId) {
     format: 'moemon-device-save',
     payload: payloadText,
     signature: signValue(payloadText, config.deviceSaveSecret),
+  };
+}
+
+export function inspectSignedDeviceSave(snapshot) {
+  const payload = readVerifiedDeviceSave(snapshot);
+  return {
+    username: normalizeUsername(payload?.user?.username || ''),
+    email: normalizeEmail(payload?.user?.email || ''),
+    issuedAt: typeof payload?.issuedAt === 'string' ? payload.issuedAt : '',
   };
 }
 
@@ -11912,83 +12038,3 @@ export function purchasePersistentItem(userId, itemSlug, quantity = 1) {
   saveUserMeta(userId, user.meta);
   return getUserById(userId);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

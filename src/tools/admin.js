@@ -1,4 +1,4 @@
-﻿import {
+import {
   createAdmin,
   listUsers,
   adminGrantCash,
@@ -10,6 +10,7 @@
   adminSetRole,
   adminUnlockMode,
   adminClearRun,
+  flushPendingWorldBackup,
 } from '../core.js';
 
 function usage() {
@@ -131,7 +132,9 @@ async function main() {
   process.exit(1);
 }
 
-main().catch((error) => {
-  console.error(error.message || error);
-  process.exit(1);
-});
+main()
+  .then(() => flushPendingWorldBackup())
+  .catch((error) => {
+    console.error(error.message || error);
+    process.exit(1);
+  });

@@ -15,7 +15,9 @@ import {
   createSession,
   createSignedDeviceSave,
   destroySession,
+  flushPendingWorldBackup,
   getUserBySessionToken,
+  inspectSignedDeviceSave,
   requestPasswordReset,
   resetPasswordWithToken,
   getHubState,
@@ -123,6 +125,33 @@ async function parseJson(request) {
     return JSON.parse(raw);
   } catch {
     throw new Error('Invalid JSON payload.');
+  }
+}
+
+function parseDeviceBackupField(rawValue) {
+  if (typeof rawValue !== 'string' || !rawValue.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(rawValue);
+  } catch {
+    return null;
+  }
+}
+
+function loginMatchesSignedDeviceSave(loginValue, deviceSave) {
+  if (!deviceSave) {
+    return false;
+  }
+  const normalizedLogin = String(loginValue || '').trim().toLowerCase();
+  if (!normalizedLogin) {
+    return false;
+  }
+  try {
+    const identity = inspectSignedDeviceSave(deviceSave?.backup || deviceSave);
+    return [identity.username, identity.email].some((candidate) => String(candidate || '').trim().toLowerCase() === normalizedLogin);
+  } catch {
+    return false;
   }
 }
 
@@ -5567,10 +5596,11 @@ export async function handleRequest(request, response) {
         title: 'Login',
         user,
         flash,
-        body: authCard('Sign in', 'Use your username or email to continue a saved account.', `
+        body: authCard('Sign in', 'Use your username or email to continue a saved account. Same-browser backups can restore missing Vercel accounts automatically.', `
           <form method="post" action="/login" class="stack-form">
             <label><span>Username or email</span><input type="text" name="login" required /></label>
             <label><span>Password</span><input type="password" name="password" required /></label>
+            <input type="hidden" name="deviceBackup" value="" data-device-save-input />
             <button class="button primary" type="submit">Login</button>
           </form>
         `, '<p class="muted"><a href="/forgot-password">Need a reset link?</a></p>'),
@@ -5580,7 +5610,18 @@ export async function handleRequest(request, response) {
 
     if (request.method === 'POST' && pathname === '/login') {
       const form = await parseForm(request);
-      const signedIn = authenticateUser(form.data.login, form.data.password);
+      let signedIn = authenticateUser(form.data.login, form.data.password);
+      if (!signedIn) {
+        const deviceBackup = parseDeviceBackupField(form.data.deviceBackup);
+        if (loginMatchesSignedDeviceSave(form.data.login, deviceBackup)) {
+          try {
+            restoreSignedDeviceSave(deviceBackup?.backup || deviceBackup);
+            signedIn = authenticateUser(form.data.login, form.data.password);
+          } catch (error) {
+            console.error('[moemon] Automatic device restore during login failed:', error);
+          }
+        }
+      }
       if (!signedIn) {
         setFlash(response, 'Invalid login credentials.', 'error');
         redirect(response, '/login');
@@ -6359,6 +6400,12 @@ export async function handleRequest(request, response) {
   } catch (error) {
     console.error(error);
     html(response, 500, layout({ title: 'Server Error', user, flash, body: `<section class="panel"><h1>Server error</h1><p class="muted">${escapeHtml(error.message)}</p></section>` }));
+  } finally {
+    try {
+      await flushPendingWorldBackup();
+    } catch (error) {
+      console.error('[moemon] Failed to flush pending world backup snapshot:', error);
+    }
   }
 }
 
@@ -6371,96 +6418,3 @@ if (isDirectRun) {
     console.log(`Moemon Arena listening on ${config.appOrigin}`);
   });
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
