@@ -1,5 +1,8 @@
 $ErrorActionPreference = 'Stop'
-$port = 3123
+$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+$listener.Start()
+$port = $listener.LocalEndpoint.Port
+$listener.Stop()
 $root = "http://127.0.0.1:$port"
 $tempRoot = Join-Path $env:TEMP ("moemon-smoke-" + [guid]::NewGuid().ToString('N'))
 $dbPath = Join-Path $tempRoot 'moemon.sqlite'

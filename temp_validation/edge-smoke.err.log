@@ -1,0 +1,32 @@
+[0329/221236.548:ERROR:third_party\crashpad\crashpad\util\win\registration_protocol_win.cc:108] CreateFile: Access is denied. (0x5)
+[12596:5552:0329/221236.784:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_manager.cc:30] EACPolicyManager::Create C:\Moemon\temp_validation\edge-profile-2 1
+[12596:5552:0329/221236.836:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_store.cc:152] EACPolicyStore load from disk failed: no policy file exists at C:\Moemon\temp_validation\edge-profile-2\Policy\Machine Policy
+[12596:5552:0329/221236.852:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_store.cc:233] EACPolicyStore policy loaded: result.status=EACPolicyLoadStatusForUma(1), scope=TOKEN
+[12596:5552:0329/221236.855:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_store.cc:243] EACPolicyStore policy load failed: No policy found on disk, scope=TOKEN
+[12596:5552:0329/221236.855:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_manager.cc:30] EACPolicyManager::Create C:\Moemon\temp_validation\edge-profile-2 1
+[12596:5552:0329/221236.855:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_store.cc:152] EACPolicyStore load from disk failed: no policy file exists at C:\Moemon\temp_validation\edge-profile-2\Policy\Profile Machine Policy
+[12596:5552:0329/221236.855:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_store.cc:233] EACPolicyStore policy loaded: result.status=EACPolicyLoadStatusForUma(1), scope=PROFILE_MACHINE
+[12596:5552:0329/221236.855:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_store.cc:243] EACPolicyStore policy load failed: No policy found on disk, scope=PROFILE_MACHINE
+[12596:5552:0329/221236.868:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_manager.cc:60] EACPolicyManager initializing, scope=TOKEN 0x4a0000a8300
+[12596:5552:0329/221236.881:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_manager.cc:169] EACPolicyManager store loaded, scope=TOKEN
+[12596:5552:0329/221236.884:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_manager.cc:117] EACPolicyManager publishing policies, scope=TOKEN 0x4a0000a8300
+[12596:5552:0329/221236.888:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_manager.cc:60] EACPolicyManager initializing, scope=PROFILE_MACHINE 0x4a0000a8400
+[12596:5552:0329/221236.888:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_manager.cc:169] EACPolicyManager store loaded, scope=PROFILE_MACHINE
+[12596:5552:0329/221236.888:VERBOSE1:components\policy\core\common\edge_admin_center\eac_policy_manager.cc:117] EACPolicyManager publishing policies, scope=PROFILE_MACHINE 0x4a0000a8400
+[12596:5552:0329/221236.896:VERBOSE1:components\variations\service\variations_field_trial_creator.cc:94] VariationsSeedUsage:2
+[12596:5552:0329/221236.901:VERBOSE1:components\variations\service\variations_field_trial_creator.cc:539] VariationsSetupComplete
+[12596:5552:0329/221238.031:VERBOSE1:chrome\browser\media\webrtc\webrtc_event_log_manager.cc:122] WebRTC remote-bound event logging enabled.
+[12596:5552:0329/221238.032:VERBOSE1:components\proxy_config\pref_proxy_config_tracker_impl.cc:460] 0x4a4000b5500: set chrome proxy config service to 0x4a4000bca00
+[12596:5552:0329/221238.034:VERBOSE1:components\device_event_log\device_event_log_impl.cc:250] [22:12:38.035] Display: EVENT: screen_win.cc:1310 Displays updated, count: 1
+[12596:5552:0329/221238.034:VERBOSE1:components\device_event_log\device_event_log_impl.cc:250] [22:12:38.036] Display: EVENT: screen_win.cc:1312 Display[1] bounds=[0,0 800x600], workarea=[0,0 800x600], scale=1, rotation=0, panel_rotation=0 external detected
+[12596:14788:0329/221238.039:VERBOSE1:content\browser\renderer_host\media\media_stream_manager.cc:1525] MSM::InitializeMaybeAsync([this=0x4a400122300])
+[12596:14788:0329/221238.040:VERBOSE1:content\browser\renderer_host\media\media_stream_manager.cc:1525] MDM::MediaDevicesManager()
+[12596:14788:0329/221238.040:VERBOSE1:content\browser\renderer_host\media\media_stream_manager.cc:1525] MSM::MediaStreamManager([this=0x4a400122300]))
+[12596:11816:0329/221238.044:ERROR:chrome\installer\util\google_update_settings.cc:508] Failed opening key Software\Microsoft\EdgeUpdate\ClientStateMedium\{56EB18F8-B008-4CBD-B6D2-8C97FE7E9062} to set usagestats; result: 5
+[12596:5552:0329/221238.046:VERBOSE1:components\enterprise\browser\controller\chrome_browser_cloud_management_controller.cc:190] Cloud management controller initialization aborted as CBCM is not enabled. Please use the `--enable-chrome-browser-cloud-management` command line flag to enable it if you are not using the official Google Chrome build.
+[12596:5552:0329/221238.046:VERBOSE1:chrome\installer\util\install_util.cc:292] Existing version found: 146.0.3856.84
+[12596:11816:0329/221238.046:ERROR:chrome\installer\util\google_update_settings.cc:541] Failed opening key Software\Microsoft\EdgeUpdate\ClientStateMedium\{56EB18F8-B008-4CBD-B6D2-8C97FE7E9062} to set urlstats; result: 5
+[12596:5552:0329/221238.047:VERBOSE1:components\edge_share\core\common\edge_share_features.cc:92] IsEdgeShareEnhancedCopyPasteEnabled returning 1
+[12596:4584:0329/221238.049:FATAL:mojo\public\cpp\platform\platform_channel.cc:170] Check failed: . : Access is denied. (0x5)
+[12596:5552:0329/221238.051:VERBOSE1:chrome\browser\enterprise\platform_auth\platform_auth_policy_observer.cc:99] PlatformAuthProviderManager enabled: 0
+[0329/221238.051:ERROR:third_party\crashpad\crashpad\client\crashpad_client_win.cc:154] crash server failed to launch

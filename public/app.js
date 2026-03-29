@@ -1,3 +1,14 @@
+const moemonAppState = window.__moemonAppState || (window.__moemonAppState = {
+  tabMemory: {},
+  softNavigationReady: false,
+  commandMenusReady: false,
+  navigation: {
+    requestId: 0,
+    controller: null,
+  },
+});
+let commandMenuLayer = null;
+const VIEW_MODE_STORAGE_KEY = 'moemon-view-mode';
 const tabGroups = document.querySelectorAll('[data-tab-group]');
 
 function activateTab(group, target) {
@@ -68,7 +79,7 @@ for (const screen of document.querySelectorAll('[data-battle-message]')) {
   if (!text) {
     continue;
   }
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || isMobileCommandMenuLayout()) {
     screen.textContent = text;
     continue;
   }
@@ -119,7 +130,7 @@ for (const switcher of document.querySelectorAll('[data-draft-switcher]')) {
   });
 }
 
-if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && !document.body.classList.contains('motion-reduced')) {
+if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && !document.body.classList.contains('motion-reduced') && !isMobileCommandMenuLayout()) {
   const ambientNodes = Array.from(document.querySelectorAll('.lab-resident, .region-card, .monster-pulse'));
   if (ambientNodes.length) {
     const cadence = document.body.classList.contains('motion-soft') ? 3200 : 1800;
@@ -1402,7 +1413,7 @@ function initSearchStories() {
     if (!steps.length) {
       return;
     }
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || document.body.classList.contains('motion-reduced')) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || document.body.classList.contains('motion-reduced') || isMobileCommandMenuLayout()) {
       if (result) {
         result.hidden = false;
       }
@@ -1430,51 +1441,188 @@ function initSearchStories() {
 
 initSearchStories();
 
-const moemonAppState = window.__moemonAppState || (window.__moemonAppState = {
-  tabMemory: {},
-  softNavigationReady: false,
-  commandMenusReady: false,
-  navigation: {
-    requestId: 0,
-    controller: null,
-  },
-});
-
 function closestFromTarget(target, selector) {
   return target instanceof Element ? target.closest(selector) : null;
 }
 
+function normalizeViewMode(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ['auto', 'mobile', 'desktop'].includes(normalized) ? normalized : 'auto';
+}
+
+function readStoredViewMode() {
+  return normalizeViewMode(safeLocalStorageGet(VIEW_MODE_STORAGE_KEY));
+}
+
+function viewModeStatusLabel(mode) {
+  if (mode === 'mobile') {
+    return 'Mobile 360';
+  }
+  if (mode === 'desktop') {
+    return 'Desktop';
+  }
+  return 'Auto';
+}
+
+function effectiveMobileLayout() {
+  const mode = normalizeViewMode(moemonAppState.viewMode || readStoredViewMode());
+  if (mode === 'mobile') {
+    return true;
+  }
+  if (mode === 'desktop') {
+    return false;
+  }
+  return window.matchMedia('(max-width: 760px)').matches;
+}
+
+function syncViewModeControls(root = document) {
+  const mode = normalizeViewMode(moemonAppState.viewMode || readStoredViewMode());
+  root.querySelectorAll('[data-view-mode-controls]').forEach((panel) => {
+    panel.querySelectorAll('[data-view-mode-input]').forEach((input) => {
+      const active = normalizeViewMode(input.value) === mode;
+      input.checked = active;
+      input.closest('[data-view-mode-choice]')?.classList.toggle('is-active', active);
+    });
+    const status = panel.querySelector('[data-view-mode-status]');
+    if (status) {
+      status.textContent = viewModeStatusLabel(mode);
+    }
+  });
+}
+
+function applyViewMode(mode = readStoredViewMode()) {
+  const normalized = normalizeViewMode(mode);
+  moemonAppState.viewMode = normalized;
+  safeLocalStorageSet(VIEW_MODE_STORAGE_KEY, normalized);
+  if (document.body) {
+    document.body.classList.remove('view-auto', 'view-mobile', 'view-desktop');
+    document.body.classList.add(`view-${normalized}`);
+    document.body.dataset.viewMode = normalized;
+  }
+  syncViewModeControls();
+  if (commandMenuLayer && !effectiveMobileLayout()) {
+    closeOpenCommandMenus();
+  }
+  document.querySelectorAll('[data-command-menu].is-open').forEach((menu) => {
+    positionCommandMenuPanel(menu);
+  });
+  syncCommandMenuState();
+}
+
+function initViewModeControls(root = document) {
+  syncViewModeControls(root);
+  root.querySelectorAll('[data-view-mode-controls]').forEach((panel) => {
+    if (panel.dataset.viewModeHydrated === 'true') {
+      return;
+    }
+    panel.dataset.viewModeHydrated = 'true';
+    panel.addEventListener('change', (event) => {
+      const input = event.target.closest('[data-view-mode-input]');
+      if (!input || !panel.contains(input)) {
+        return;
+      }
+      applyViewMode(input.value);
+    });
+  });
+}
+
+function isMobileCommandMenuLayout() {
+  return effectiveMobileLayout();
+}
+
+function ensureCommandMenuLayer() {
+  if (commandMenuLayer && commandMenuLayer.isConnected) {
+    return commandMenuLayer;
+  }
+  commandMenuLayer = document.querySelector('[data-command-menu-layer]');
+  if (!commandMenuLayer) {
+    commandMenuLayer = document.createElement('div');
+    commandMenuLayer.className = 'command-menu-layer';
+    commandMenuLayer.dataset.commandMenuLayer = 'true';
+    commandMenuLayer.hidden = true;
+    commandMenuLayer.addEventListener('click', (event) => {
+      if (event.target === commandMenuLayer) {
+        closeOpenCommandMenus();
+      }
+    });
+    document.body.appendChild(commandMenuLayer);
+  }
+  return commandMenuLayer;
+}
+
+function findCommandMenuPanel(menu) {
+  const trigger = menu.querySelector('[data-command-menu-trigger]');
+  const panelId = trigger?.getAttribute('aria-controls') || '';
+  if (panelId) {
+    const globalPanel = document.getElementById(panelId);
+    if (globalPanel?.matches?.('[data-command-menu-panel]')) {
+      return globalPanel;
+    }
+  }
+  return menu.querySelector('[data-command-menu-panel]');
+}
+
+function restoreCommandMenuPanel(menu) {
+  const panel = findCommandMenuPanel(menu);
+  if (!panel) {
+    return;
+  }
+  if (panel.parentElement !== menu) {
+    menu.appendChild(panel);
+  }
+}
+
 function syncCommandMenuState() {
-  document.body.classList.toggle('command-menu-open', !!document.querySelector('[data-command-menu].is-open'));
+  const hasOpen = !!document.querySelector('[data-command-menu].is-open');
+  document.body.classList.toggle('command-menu-open', hasOpen);
+  if (!commandMenuLayer) {
+    return;
+  }
+  const showLayer = hasOpen && isMobileCommandMenuLayout() && !!commandMenuLayer.querySelector('[data-command-menu-panel]');
+  commandMenuLayer.hidden = !showLayer;
 }
 
 function positionCommandMenuPanel(menu) {
   const trigger = menu.querySelector('[data-command-menu-trigger]');
-  const panel = menu.querySelector('[data-command-menu-panel]');
+  const panel = findCommandMenuPanel(menu);
   if (!trigger || !panel) {
     return;
   }
-  if (window.matchMedia('(max-width: 760px)').matches) {
+  if (isMobileCommandMenuLayout()) {
+    const layer = ensureCommandMenuLayer();
+    if (panel.parentElement !== layer) {
+      layer.appendChild(panel);
+    }
     const triggerRect = trigger.getBoundingClientRect();
     const top = Math.max(12, Math.round(triggerRect.bottom + 10));
-    menu.style.setProperty('--command-menu-top', `${top}px`);
+    panel.style.setProperty('--command-menu-top', `${top}px`);
+    panel.style.setProperty('--command-menu-max-height', `calc(100dvh - ${top}px - 86px - env(safe-area-inset-bottom, 0px))`);
     return;
   }
-  menu.style.removeProperty('--command-menu-top');
+  panel.style.removeProperty('--command-menu-top');
+  panel.style.removeProperty('--command-menu-max-height');
+  restoreCommandMenuPanel(menu);
 }
 
 function setCommandMenuOpen(menu, open) {
   const trigger = menu.querySelector('[data-command-menu-trigger]');
-  const panel = menu.querySelector('[data-command-menu-panel]');
+  const panel = findCommandMenuPanel(menu);
   menu.classList.toggle('is-open', open);
   if (trigger) {
     trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
-  if (panel) {
-    panel.hidden = !open;
+  if (!panel) {
+    syncCommandMenuState();
+    return;
   }
   if (open) {
+    panel.hidden = false;
     positionCommandMenuPanel(menu);
+  } else {
+    panel.hidden = true;
+    panel.style.removeProperty('--command-menu-top');
+    panel.style.removeProperty('--command-menu-max-height');
+    restoreCommandMenuPanel(menu);
   }
   syncCommandMenuState();
 }
@@ -1515,13 +1663,16 @@ function initCommandMenus(root = document) {
   });
 
   if (moemonAppState.commandMenusReady) {
+    document.querySelectorAll('[data-command-menu].is-open').forEach((menu) => {
+      positionCommandMenuPanel(menu);
+    });
     syncCommandMenuState();
     return;
   }
   moemonAppState.commandMenusReady = true;
 
   document.addEventListener('click', (event) => {
-    if (closestFromTarget(event.target, '[data-command-menu]')) {
+    if (closestFromTarget(event.target, '[data-command-menu]') || closestFromTarget(event.target, '[data-command-menu-panel]')) {
       return;
     }
     closeOpenCommandMenus();
@@ -1534,12 +1685,19 @@ function initCommandMenus(root = document) {
   });
 
   window.addEventListener('resize', () => {
+    if (!isMobileCommandMenuLayout()) {
+      document.querySelectorAll('[data-command-menu]').forEach((menu) => {
+        if (!menu.classList.contains('is-open')) {
+          restoreCommandMenuPanel(menu);
+        }
+      });
+    }
     document.querySelectorAll('[data-command-menu].is-open').forEach((menu) => {
       positionCommandMenuPanel(menu);
     });
+    syncCommandMenuState();
   });
 }
-
 function safeSessionStorageSet(key, value) {
   try {
     window.sessionStorage.setItem(key, value);
@@ -1553,6 +1711,14 @@ function safeSessionStorageGet(key) {
     return window.sessionStorage.getItem(key) || '';
   } catch {
     return '';
+  }
+}
+
+function safeSessionStorageRemove(key) {
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // ignore storage failures
   }
 }
 
@@ -1584,6 +1750,8 @@ const LEGACY_DEVICE_SAVE_STORAGE_KEY = 'moemon-device-save';
 const DEVICE_SAVE_STORAGE_KEY = 'moemon-device-saves';
 const DEVICE_SAVE_STORAGE_VERSION = 1;
 const DEVICE_SAVE_MAX_ENTRIES = 12;
+const DEVICE_AUTO_RESTORE_SKIP_KEY = 'moemon-device-auto-restore-skip';
+const DEVICE_AUTO_RESTORE_ATTEMPT_KEY = 'moemon-device-auto-restore-attempt';
 
 function parseStoredDeviceSaveEnvelope(rawValue) {
   if (!rawValue || typeof rawValue !== 'string') {
@@ -1793,13 +1961,204 @@ function syncDeviceSaveSnapshot() {
   return upsertStoredDeviceSave(raw);
 }
 
-async function restoreStoredDeviceSave(entry, button, status) {
-  if (!entry?.envelope) {
-    status.textContent = 'That local save is no longer available.';
+function parseTransferDeviceSave(rawValue) {
+  const raw = String(rawValue || '').trim();
+  if (!raw) {
+    return null;
+  }
+  const direct = parseStoredDeviceSaveEnvelope(raw);
+  if (direct) {
+    return direct;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed?.backup) {
+      return parseStoredDeviceSaveEnvelope(JSON.stringify(parsed.backup));
+    }
+    if (parsed?.payload && parsed?.signature) {
+      return parseStoredDeviceSaveEnvelope(JSON.stringify(parsed));
+    }
+  } catch {
+    // ignore invalid pasted payloads
+  }
+  return null;
+}
+
+function focusAndSelectTextArea(textarea) {
+  if (!textarea) {
     return;
   }
-  button.disabled = true;
-  status.textContent = `Restoring ${entry.username || 'your saved account'}...`;
+  textarea.focus();
+  textarea.select();
+  if (typeof textarea.setSelectionRange === 'function') {
+    textarea.setSelectionRange(0, textarea.value.length);
+  }
+}
+
+async function copyTextToClipboard(text) {
+  const value = String(text || '');
+  if (!value) {
+    throw new Error('Nothing to copy yet.');
+  }
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const helper = document.createElement('textarea');
+  helper.value = value;
+  helper.setAttribute('readonly', 'true');
+  helper.style.position = 'fixed';
+  helper.style.opacity = '0';
+  document.body.appendChild(helper);
+  focusAndSelectTextArea(helper);
+  const copied = document.execCommand('copy');
+  helper.remove();
+  if (!copied) {
+    throw new Error('Clipboard copy is not available here.');
+  }
+}
+
+function buildTransferEntry(rawValue, mode = '') {
+  const parsed = parseTransferDeviceSave(rawValue);
+  if (!parsed) {
+    throw new Error('Paste a valid transfer code from the other device first.');
+  }
+  const entry = buildStoredDeviceSaveEntry(parsed.envelope, parsed.snapshot, parsed.snapshot?.issuedAt || new Date().toISOString());
+  if (!entry) {
+    throw new Error('That transfer code is missing account details.');
+  }
+  if (mode && !matchesDeviceSaveMode(entry, mode)) {
+    throw new Error(mode === 'admin' ? 'That transfer code belongs to a player account.' : 'That transfer code belongs to an admin account.');
+  }
+  return entry;
+}
+
+function initDeviceTransferTools(root = document) {
+  const liveCode = (document.getElementById('moemon-device-save')?.textContent || '').trim();
+
+  root.querySelectorAll('[data-device-transfer-export]').forEach((panel) => {
+    const output = panel.querySelector('[data-device-transfer-output]');
+    const copyButton = panel.querySelector('[data-device-transfer-copy]');
+    const selectButton = panel.querySelector('[data-device-transfer-select]');
+    const status = panel.querySelector('[data-device-transfer-export-status]');
+    if (output) {
+      output.value = liveCode;
+    }
+    if (copyButton) {
+      copyButton.disabled = !liveCode;
+    }
+    if (selectButton) {
+      selectButton.disabled = !liveCode;
+    }
+    if (status && !liveCode) {
+      status.textContent = 'Sign in on the original device first so this page can generate a transfer code.';
+    }
+    if (panel.dataset.deviceTransferExportHydrated === 'true') {
+      return;
+    }
+    panel.dataset.deviceTransferExportHydrated = 'true';
+    copyButton?.addEventListener('click', async () => {
+      if (!liveCode) {
+        if (status) {
+          status.textContent = 'No transfer code is available on this page yet.';
+        }
+        return;
+      }
+      try {
+        await copyTextToClipboard(liveCode);
+        if (status) {
+          status.textContent = 'Transfer code copied. Paste it on the other device.';
+        }
+      } catch (error) {
+        if (status) {
+          status.textContent = error?.message || 'Copy failed.';
+        }
+      }
+    });
+    selectButton?.addEventListener('click', () => {
+      if (!output) {
+        return;
+      }
+      focusAndSelectTextArea(output);
+      if (status) {
+        status.textContent = 'Transfer code selected.';
+      }
+    });
+  });
+
+  root.querySelectorAll('[data-device-transfer-panel]').forEach((panel) => {
+    const mode = panel.dataset.deviceTransferMode || '';
+    const input = panel.querySelector('[data-device-transfer-input]');
+    const restoreButton = panel.querySelector('[data-device-transfer-restore]');
+    const loginButton = panel.querySelector('[data-device-transfer-use-login]');
+    const status = panel.querySelector('[data-device-transfer-status]');
+    if (panel.dataset.deviceTransferHydrated === 'true') {
+      return;
+    }
+    panel.dataset.deviceTransferHydrated = 'true';
+
+    const readEntry = () => buildTransferEntry(input?.value || '', mode);
+
+    restoreButton?.addEventListener('click', () => {
+      try {
+        const entry = readEntry();
+        upsertStoredDeviceSave(entry.envelope);
+        clearAutoDeviceRestoreGuards();
+        restoreStoredDeviceSave(entry, restoreButton, status);
+      } catch (error) {
+        if (status) {
+          status.textContent = error?.message || 'Transfer restore failed.';
+        }
+      }
+    });
+
+    loginButton?.addEventListener('click', () => {
+      try {
+        const entry = readEntry();
+        upsertStoredDeviceSave(entry.envelope);
+        const scope = panel.closest('.auth-card') || root;
+        const loginField = scope.querySelector('input[name="login"]');
+        const backupField = scope.querySelector('[data-device-save-input]');
+        if (loginField) {
+          loginField.value = entry.email || entry.username || '';
+          loginField.dispatchEvent(new Event('input', { bubbles: true }));
+          loginField.focus();
+        }
+        if (backupField) {
+          backupField.value = JSON.stringify(entry.envelope);
+        }
+        hydrateDeviceSaveInputs(scope);
+        if (status) {
+          status.textContent = `${entry.username || 'Saved account'} is ready to sign in on this device.`;
+        }
+      } catch (error) {
+        if (status) {
+          status.textContent = error?.message || 'Transfer code invalid.';
+        }
+      }
+    });
+
+    input?.addEventListener('input', () => {
+      if (status) {
+        status.textContent = 'Paste a transfer code from your other device, then choose restore or login.';
+      }
+    });
+  });
+}
+
+async function restoreStoredDeviceSave(entry, button, status) {
+  if (!entry?.envelope) {
+    if (status) {
+      status.textContent = 'That local save is no longer available.';
+    }
+    return;
+  }
+  if (button) {
+    button.disabled = true;
+  }
+  if (status) {
+    status.textContent = `Restoring ${entry.username || 'your saved account'}...`;
+  }
   try {
     const response = await fetch('/auth/device-restore', {
       method: 'POST',
@@ -1813,12 +2172,50 @@ async function restoreStoredDeviceSave(entry, button, status) {
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || 'Restore failed.');
     }
-    status.textContent = 'Save restored. Opening the hub...';
+    if (status) {
+      status.textContent = 'Save restored. Opening the hub...';
+    }
     window.location.assign(payload.redirect || '/hub');
   } catch (error) {
-    button.disabled = false;
-    status.textContent = error?.message || 'Restore failed.';
+    if (button) {
+      button.disabled = false;
+    }
+    if (status) {
+      status.textContent = error?.message || 'Restore failed.';
+    }
   }
+}
+
+function clearAutoDeviceRestoreGuards() {
+  safeSessionStorageRemove(DEVICE_AUTO_RESTORE_SKIP_KEY);
+  safeSessionStorageRemove(DEVICE_AUTO_RESTORE_ATTEMPT_KEY);
+}
+
+function initAutoRestoreGuards(root = document) {
+  if (document.body.classList.contains('signed-in-shell')) {
+    clearAutoDeviceRestoreGuards();
+  }
+
+  root.querySelectorAll('form[action="/logout"]').forEach((form) => {
+    if (form.dataset.autoRestoreGuard === 'true') {
+      return;
+    }
+    form.dataset.autoRestoreGuard = 'true';
+    form.addEventListener('submit', () => {
+      safeSessionStorageSet(DEVICE_AUTO_RESTORE_SKIP_KEY, '1');
+      safeSessionStorageRemove(DEVICE_AUTO_RESTORE_ATTEMPT_KEY);
+    });
+  });
+
+  root.querySelectorAll('form[action="/login"], form[action="/admin-login"]').forEach((form) => {
+    if (form.dataset.autoRestoreSubmitBound === 'true') {
+      return;
+    }
+    form.dataset.autoRestoreSubmitBound = 'true';
+    form.addEventListener('submit', () => {
+      clearAutoDeviceRestoreGuards();
+    });
+  });
 }
 
 function initDeviceSaveRestore(root = document) {
@@ -1865,7 +2262,7 @@ function initDeviceSaveRestore(root = document) {
       const useButton = document.createElement('button');
       useButton.className = 'button ghost';
       useButton.type = 'button';
-      useButton.textContent = 'Use For Login';
+      useButton.textContent = 'Fill Login';
       actions.appendChild(useButton);
 
       card.appendChild(actions);
@@ -1876,10 +2273,12 @@ function initDeviceSaveRestore(root = document) {
       card.appendChild(status);
 
       restoreButton.addEventListener('click', () => {
+        clearAutoDeviceRestoreGuards();
         restoreStoredDeviceSave(entry, restoreButton, status);
       });
 
       useButton.addEventListener('click', () => {
+        clearAutoDeviceRestoreGuards();
         const scope = slot.closest('.auth-card') || root;
         const loginField = scope.querySelector('input[name="login"]');
         const backupField = scope.querySelector('[data-device-save-input]');
@@ -1898,6 +2297,51 @@ function initDeviceSaveRestore(root = document) {
       slot.appendChild(card);
     });
   });
+}
+
+function initAutoDeviceRestore(root = document) {
+  if (document.body.classList.contains('signed-in-shell')) {
+    clearAutoDeviceRestoreGuards();
+    return;
+  }
+
+  let mode = '';
+  if (window.location.pathname === '/login') {
+    mode = 'player';
+  } else if (window.location.pathname === '/admin-login') {
+    mode = 'admin';
+  }
+  if (!mode) {
+    return;
+  }
+  if (safeSessionStorageGet(DEVICE_AUTO_RESTORE_SKIP_KEY) === '1') {
+    return;
+  }
+  if (safeSessionStorageGet(DEVICE_AUTO_RESTORE_ATTEMPT_KEY) === `${window.location.pathname}:${mode}`) {
+    return;
+  }
+
+  const entries = readStoredDeviceSaves().filter((entry) => matchesDeviceSaveMode(entry, mode));
+  if (entries.length !== 1) {
+    return;
+  }
+
+  const slot = root.querySelector('[data-device-restore-slot]');
+  if (!slot) {
+    return;
+  }
+
+  let status = slot.querySelector('[data-auto-device-restore-status]');
+  if (!status) {
+    status = document.createElement('p');
+    status.className = 'muted device-restore-status';
+    status.dataset.autoDeviceRestoreStatus = 'true';
+    slot.appendChild(status);
+  }
+  slot.hidden = false;
+  status.textContent = `Recovering ${entries[0].username || 'your saved account'} from this device...`;
+  safeSessionStorageSet(DEVICE_AUTO_RESTORE_ATTEMPT_KEY, `${window.location.pathname}:${mode}`);
+  restoreStoredDeviceSave(entries[0], null, status);
 }
 
 function tabMemoryKey(group, index = 0) {
@@ -1971,7 +2415,7 @@ function hydrateBattleMessages(root = document) {
     if (!text) {
       return;
     }
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || isMobileCommandMenuLayout()) {
       screen.textContent = text;
       return;
     }
@@ -2014,7 +2458,10 @@ function hydrateMoemonPage() {
   hydrateAutoscroll();
   hydrateBattleMessages();
   hydrateDraftSwitchers();
+  applyViewMode(readStoredViewMode());
+  initViewModeControls();
   initCommandMenus();
+  initAutoRestoreGuards();
   initPokedexFilters();
   initTeamBuilder(dashboard);
   initBattleSimulator(dashboard);
@@ -2029,6 +2476,8 @@ function hydrateMoemonPage() {
   syncDeviceSaveSnapshot();
   hydrateDeviceSaveInputs();
   initDeviceSaveRestore();
+  initAutoDeviceRestore();
+  initDeviceTransferTools();
 }
 
 function updateCurrentHistoryState(scrollX = window.scrollX, scrollY = window.scrollY) {
@@ -2176,6 +2625,7 @@ async function softNavigate(options) {
     const restoredScroll = options.restoreScroll || (sameScreen ? { scrollX: previousScrollX, scrollY: previousScrollY } : null);
     const historyMode = options.historyMode === 'auto' ? (sameScreen ? 'replace' : 'push') : options.historyMode;
     replaceDocumentBody(nextDoc);
+    applyViewMode(readStoredViewMode());
     if (historyMode === 'replace') {
       history.replaceState({
         __moemonSoft: true,
@@ -2329,11 +2779,13 @@ function initSoftNavigation() {
   });
 }
 
+applyViewMode(readStoredViewMode());
+initViewModeControls();
 initCommandMenus();
+initAutoRestoreGuards();
 syncDeviceSaveSnapshot();
 hydrateDeviceSaveInputs();
 initDeviceSaveRestore();
+initAutoDeviceRestore();
+initDeviceTransferTools();
 initSoftNavigation();
-
-
-

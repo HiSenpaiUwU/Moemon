@@ -11210,6 +11210,45 @@ function renderMapSearchLine(template, values = {}) {
   return text;
 }
 
+function normalizeMapSpeciesHistory(entries, limit = 8) {
+  return Array.isArray(entries)
+    ? entries
+      .map((value) => Math.max(0, Math.floor(Number(value || 0))))
+      .filter(Boolean)
+      .slice(0, limit)
+    : [];
+}
+
+function pushMapSpeciesHistory(entries, speciesId, limit = 8) {
+  const normalizedSpeciesId = Math.max(0, Math.floor(Number(speciesId || 0)));
+  const next = normalizeMapSpeciesHistory(entries, limit).filter((entry) => entry !== normalizedSpeciesId);
+  if (!normalizedSpeciesId) {
+    return next.slice(0, limit);
+  }
+  next.unshift(normalizedSpeciesId);
+  return next.slice(0, limit);
+}
+
+function pushMapPartyHistory(entries, speciesIds = [], limit = 12) {
+  let next = normalizeMapSpeciesHistory(entries, limit);
+  for (const speciesId of speciesIds) {
+    next = pushMapSpeciesHistory(next, speciesId, limit);
+  }
+  return next.slice(0, limit);
+}
+
+function pickMapVariedSpecies(pool, rng, blockedSpeciesIds = []) {
+  const safePool = Array.isArray(pool) ? pool.filter(Boolean) : [];
+  if (!safePool.length) {
+    return null;
+  }
+  const blocked = new Set(Array.isArray(blockedSpeciesIds)
+    ? blockedSpeciesIds.map((value) => Math.max(0, Math.floor(Number(value || 0)))).filter(Boolean)
+    : []);
+  const freshPool = safePool.filter((species) => !blocked.has(Number(species?.id || 0)));
+  return randomChoice(freshPool.length ? freshPool : safePool, rng);
+}
+
 function normalizeMapAdventureLog(entries) {
   return Array.isArray(entries)
     ? entries
@@ -11260,6 +11299,10 @@ function baseMapSearchRegionState(region) {
     chain: 0,
     bestChain: 0,
     rareMeter: 0,
+    boardRotation: 0,
+    adventureRolls: 0,
+    recentEncounterSpeciesIds: [],
+    recentAdventureSpeciesIds: [],
     lastEncounter: '',
     lastResult: 'Every search now builds route chain, rare signal, and a live adventure log.',
     lastResultTone: profile.tone,
@@ -11285,6 +11328,10 @@ function normalizeMapSearchRegionState(current, region) {
   next.chain = Math.max(0, Math.floor(Number(next.chain || 0)));
   next.bestChain = Math.max(next.chain, Math.floor(Number(next.bestChain || 0)));
   next.rareMeter = clamp(Math.floor(Number(next.rareMeter || 0)), 0, 100);
+  next.boardRotation = Math.max(0, Math.floor(Number(next.boardRotation || 0)));
+  next.adventureRolls = Math.max(0, Math.floor(Number(next.adventureRolls || 0)));
+  next.recentEncounterSpeciesIds = normalizeMapSpeciesHistory(next.recentEncounterSpeciesIds, 6);
+  next.recentAdventureSpeciesIds = normalizeMapSpeciesHistory(next.recentAdventureSpeciesIds, 12);
   next.lastExpGain = Math.max(0, Math.floor(Number(next.lastExpGain || 0)));
   next.lastCashGain = Math.max(0, Math.floor(Number(next.lastCashGain || 0)));
   next.lastTrainerExpGain = Math.max(0, Math.floor(Number(next.lastTrainerExpGain || 0)));
@@ -11331,10 +11378,17 @@ function mapSearchStateForRegion(meta, region) {
   const rarePool = speciesPool.filter((species) => species.rarity === 'rare');
   const legendPool = speciesPool.filter((species) => ['legendary', 'mythic'].includes(species.rarity));
   const commonPool = speciesPool.filter((species) => species.rarity !== 'rare' && !['legendary', 'mythic'].includes(species.rarity));
+  const recentSightingIds = new Set([...current.recentEncounterSpeciesIds, ...current.recentAdventureSpeciesIds].slice(0, 6));
+  const rotatingKey = `${region.slug}:${current.searches}:${current.boardRotation}:${current.adventureRolls}:${current.chain}:${current.rareMeter}`;
+  const rotatingSightings = (pool, key, count) => {
+    const filteredPool = pool.filter((species) => !recentSightingIds.has(species.id));
+    const sourcePool = filteredPool.length >= count ? filteredPool : pool;
+    return stableSpeciesSlice(sourcePool, `${rotatingKey}:${key}`, count);
+  };
   const featuredSightings = [
-    ...stableSpeciesSlice(rarePool, `${region.slug}:rare:${current.searches}`, 2),
-    ...stableSpeciesSlice(commonPool, `${region.slug}:common:${current.searches}`, 2),
-    ...stableSpeciesSlice(legendPool, `${region.slug}:legend:${current.searches}`, 1),
+    ...rotatingSightings(rarePool, 'rare', 2),
+    ...rotatingSightings(commonPool, 'common', 2),
+    ...rotatingSightings(legendPool, 'legend', 1),
   ].filter((species, index, list) => species && list.findIndex((entry) => entry.id === species.id) === index).slice(0, 4);
   return {
     regionSlug: region.slug,
@@ -11343,6 +11397,9 @@ function mapSearchStateForRegion(meta, region) {
     personalityLabel: profile.label,
     personalityTone: profile.tone,
     mapLevel: levelState.level,
+    encounterChance: odds.encounterChance,
+    rareChance: odds.rareChance,
+    legendaryChance: odds.legendaryChance,
     totalSearches: current.searches,
     expIntoLevel: levelState.expIntoLevel,
     expForNextLevel: levelState.expForNextLevel,
@@ -11394,13 +11451,15 @@ function resolveMapSearchEncounter(region, regionState, profile, rng) {
   const rarePool = speciesPool.filter((species) => species.rarity === 'rare');
   const legendaryPool = speciesPool.filter((species) => ['legendary', 'mythic'].includes(species.rarity));
   const commonPool = speciesPool.filter((species) => species.rarity !== 'rare' && !['legendary', 'mythic'].includes(species.rarity));
+  const recentSpeciesIds = normalizeMapSpeciesHistory(regionState.recentEncounterSpeciesIds, 5);
+  const pickSpecies = (pool, fallbackPool = speciesPool) => pickMapVariedSpecies(pool.length ? pool : fallbackPool, rng, recentSpeciesIds);
   let species = null;
   if (legendaryPool.length && rng() < odds.legendaryChance) {
-    species = randomChoice(legendaryPool, rng);
+    species = pickSpecies(legendaryPool);
   } else if (rarePool.length && rng() < odds.rareChance) {
-    species = randomChoice(rarePool, rng);
+    species = pickSpecies(rarePool);
   } else {
-    species = randomChoice(commonPool.length ? commonPool : speciesPool, rng);
+    species = pickSpecies(commonPool.length ? commonPool : speciesPool);
   }
   if (!species) {
     return null;
@@ -11506,22 +11565,43 @@ function resolveMapSearchSideEvent(region, regionState, profile, rng) {
   };
 }
 
-function buildMapAdventureEnemyParty(region, mapLevel, adventureMode, userSeed = 0) {
+function buildMapAdventureEnemyParty(region, regionState, adventureMode, userSeed = 0) {
   const kind = adventureMode === 'boss' ? 'boss' : adventureMode === 'trainer' ? 'trainer' : 'wild';
+  const mapLevel = Math.max(1, Math.floor(Number(regionState?.mapLevel || regionState || 1)));
+  const routeChain = Math.max(0, Math.floor(Number(regionState?.chain || 0)));
+  const rareMeter = clamp(Math.floor(Number(regionState?.rareMeter || 0)), 0, 100);
+  const adventureRolls = Math.max(0, Math.floor(Number(regionState?.adventureRolls || 0)));
   const count = kind === 'boss' ? 3 : kind === 'trainer' ? 2 : 1;
   const allowLegends = kind === 'boss' && mapLevel >= 4;
-  const seed = parseInt(hashValue(`${region.slug}:${mapLevel}:${adventureMode}:${userSeed}`).slice(0, 8), 16) >>> 0;
+  const seed = parseInt(hashValue(`${region.slug}:${mapLevel}:${adventureMode}:${userSeed}:${adventureRolls}:${routeChain}:${rareMeter}`).slice(0, 8), 16) >>> 0;
   const rng = seeded(seed);
   const speciesPool = mapSpeciesPoolForRegion(region, { allowLegends });
+  const rarePool = speciesPool.filter((species) => species.rarity === 'rare');
+  const commonPool = speciesPool.filter((species) => species.rarity !== 'rare' && !['legendary', 'mythic'].includes(species.rarity));
   const legends = legendaryRoster().filter((species) => species.types.some((type) => region.preferredTypes.includes(type)) || (region.biomeHints || []).includes(species.biome));
-  const baseLevel = Math.max(10, Number(region.routeLevel || 12) + mapLevel * 2 + (kind === 'boss' ? 6 : kind === 'trainer' ? 3 : 0));
+  const baseLevel = Math.max(10, Number(region.routeLevel || 12) + mapLevel * 2 + Math.floor(routeChain / 6) + (kind === 'boss' ? 6 : kind === 'trainer' ? 3 : 0));
+  const rareRouteChance = clamp(0.14 + mapLevel * 0.02 + Math.min(routeChain, 12) * 0.018 + rareMeter * 0.003 + (kind === 'boss' ? 0.18 : kind === 'trainer' ? 0.08 : 0), 0.14, kind === 'boss' ? 0.74 : 0.56);
+  const legendaryChance = kind === 'boss' && legends.length
+    ? clamp(0.14 + Math.max(0, mapLevel - 4) * 0.04 + Math.max(0, routeChain - 6) * 0.016 + rareMeter * 0.0035, 0.14, 0.58)
+    : 0;
   const enemyParty = [];
+  const pickedSpeciesIds = [];
+  const recentAdventureSpeciesIds = normalizeMapSpeciesHistory(regionState?.recentAdventureSpeciesIds, 12);
   for (let index = 0; index < count; index += 1) {
-    let species = speciesPool[Math.floor(rng() * Math.max(1, speciesPool.length))] || randomChoice(SPECIES);
-    if (kind === 'boss' && legends.length && rng() < 0.35) {
-      species = legends[Math.floor(rng() * legends.length)];
+    const blockedSpeciesIds = [...recentAdventureSpeciesIds, ...pickedSpeciesIds];
+    let species = null;
+    if (legendaryChance > 0 && rng() < legendaryChance) {
+      species = pickMapVariedSpecies(legends, rng, blockedSpeciesIds);
+    } else if (rarePool.length && rng() < rareRouteChance + index * 0.04) {
+      species = pickMapVariedSpecies(rarePool, rng, blockedSpeciesIds);
+    } else {
+      species = pickMapVariedSpecies(commonPool.length ? commonPool : speciesPool, rng, blockedSpeciesIds);
     }
-    enemyParty.push(buildEnemyMonster(species, baseLevel + index, kind, mapLevel * 10 + userSeed + index + 1, null, 1));
+    if (!species) {
+      species = pickMapVariedSpecies(speciesPool.length ? speciesPool : SPECIES, rng, blockedSpeciesIds) || randomChoice(SPECIES);
+    }
+    pickedSpeciesIds.push(species.id);
+    enemyParty.push(buildEnemyMonster(species, baseLevel + index, kind, mapLevel * 10 + userSeed + adventureRolls * 7 + routeChain + index + 1, null, 1));
   }
   return enemyParty;
 }
@@ -11582,7 +11662,7 @@ export function searchMapRoute(userId, regionSlug) {
   const profile = mapSearchProfileForRegion(region);
   const nextSearchCount = current.searches + 1;
   const nextChain = Math.min(40, current.chain + 1);
-  const seed = parseInt(hashValue(`${userId}:${region.slug}:${nextSearchCount}:${current.experience}:${current.chain}:${current.rareMeter}`).slice(0, 8), 16) >>> 0;
+  const seed = parseInt(hashValue(`${userId}:${region.slug}:${nextSearchCount}:${current.experience}:${current.chain}:${current.rareMeter}:${current.boardRotation}:${current.adventureRolls}`).slice(0, 8), 16) >>> 0;
   const rng = seeded(seed);
   let rareMeter = clamp(current.rareMeter + 6 + Math.floor(nextChain / 2), 0, 100);
   const previewState = { ...current, searches: nextSearchCount, chain: nextChain, bestChain: Math.max(current.bestChain, nextChain), rareMeter };
@@ -11601,6 +11681,7 @@ export function searchMapRoute(userId, regionSlug) {
   let trainerExpGain = 0;
   let storySteps = [randomChoice(profile.intros, rng), randomChoice(profile.suspense, rng)];
   let adventureLog = current.adventureLog;
+  let recentEncounterSpeciesIds = current.recentEncounterSpeciesIds;
 
   if (rng() < encounterOdds.encounterChance) {
     const encounter = resolveMapSearchEncounter(region, previewState, profile, rng);
@@ -11624,6 +11705,7 @@ export function searchMapRoute(userId, regionSlug) {
       lastRewardDetail = `Encounter level ${formatNumber(encounter.level)}. Search odds are now ${Math.round(encounterOdds.encounterChance * 100)}% on this route.`;
       expGain += ['legendary', 'mythic'].includes(encounter.rarity) ? 3 : encounter.rarity === 'rare' ? 2 : 1;
       rareMeter = ['legendary', 'mythic'].includes(encounter.rarity) ? 18 : encounter.rarity === 'rare' ? 24 : Math.max(8, rareMeter - 12);
+      recentEncounterSpeciesIds = pushMapSpeciesHistory(current.recentEncounterSpeciesIds, encounter.species.id, 6);
       adventureLog = pushMapAdventureLog(adventureLog, `${encounter.species.name} sighted in ${region.name}.`, encounter.tone, lastRewardLabel);
     }
   }
@@ -11674,6 +11756,8 @@ export function searchMapRoute(userId, regionSlug) {
     chain: nextChain,
     bestChain: Math.max(current.bestChain, nextChain),
     rareMeter,
+    boardRotation: current.boardRotation + 1,
+    recentEncounterSpeciesIds,
     lastEncounter,
     lastResult,
     lastResultTone,
@@ -11767,6 +11851,7 @@ export function fleeMapSearchEncounter(userId, regionSlug) {
         ...current,
         chain: nextChain,
         rareMeter: nextRareMeter,
+        boardRotation: current.boardRotation + 1,
         pendingEncounter: null,
         lastEncounter: 'You let the sighting go.',
         lastResult: 'The signal fades, but the route stays warmer for the next search.',
@@ -11792,6 +11877,7 @@ export function startMapAdventure(userId, regionSlug, adventureMode = 'wild') {
   }
   const region = WORLD_REGION_MAP.get(regionSlug) || getWorldState(userId).activeRegion;
   const normalizedMode = ['wild', 'trainer', 'boss'].includes(adventureMode) ? adventureMode : 'wild';
+  const current = normalizeMapSearchRegionState(user.meta.mapSearch?.regions?.[region.slug], region);
   const regionState = mapSearchStateForRegion(user.meta, region);
   if (normalizedMode === 'trainer' && regionState.mapLevel < 2) {
     throw new Error('Trainer routes unlock at map level 2.');
@@ -11799,8 +11885,18 @@ export function startMapAdventure(userId, regionSlug, adventureMode = 'wild') {
   if (normalizedMode === 'boss' && regionState.mapLevel < 4) {
     throw new Error('Boss routes unlock at map level 4.');
   }
-  const enemyParty = buildMapAdventureEnemyParty(region, regionState.mapLevel, normalizedMode, userId);
+  const nextAdventureRolls = current.adventureRolls + 1;
+  const adventureState = {
+    mapLevel: regionState.mapLevel,
+    chain: current.chain,
+    rareMeter: current.rareMeter,
+    adventureRolls: nextAdventureRolls,
+    recentAdventureSpeciesIds: current.recentAdventureSpeciesIds,
+  };
+  const enemyParty = buildMapAdventureEnemyParty(region, adventureState, normalizedMode, userId + current.searches + nextAdventureRolls);
   const titlePrefix = normalizedMode === 'boss' ? 'Boss Route' : normalizedMode === 'trainer' ? 'Trainer Route' : 'Wild Route';
+  const enemyPreview = enemyParty.map((monster) => monster.name).join(', ');
+  const tone = normalizedMode === 'boss' ? 'warning' : normalizedMode === 'trainer' ? 'default' : 'success';
   const run = createSpecialRunForUser(userId, {
     mode: 'adventure',
     label: `${region.name} ${titlePrefix}`,
@@ -11820,17 +11916,19 @@ export function startMapAdventure(userId, regionSlug, adventureMode = 'wild') {
       adventureMode: normalizedMode,
     },
   });
-  const current = normalizeMapSearchRegionState(user.meta.mapSearch?.regions?.[region.slug], region);
   user.meta.mapSearch.regions[region.slug] = {
     ...current,
-    lastEncounter: `${titlePrefix} opened from the adventure board.`,
-    lastResult: `${titlePrefix} launched in ${region.name}.`,
-    lastResultTone: normalizedMode === 'boss' ? 'warning' : normalizedMode === 'trainer' ? 'default' : 'success',
+    boardRotation: current.boardRotation + 1,
+    adventureRolls: nextAdventureRolls,
+    recentAdventureSpeciesIds: pushMapPartyHistory(current.recentAdventureSpeciesIds, enemyParty.map((monster) => monster.speciesId), 12),
+    lastEncounter: `${titlePrefix} opened with ${enemyPreview}.`,
+    lastResult: `${titlePrefix} launched in ${region.name}. Enemy setup rotated to ${enemyPreview}.`,
+    lastResultTone: tone,
     lastRewardLabel: titlePrefix,
-    lastRewardTone: normalizedMode === 'boss' ? 'warning' : normalizedMode === 'trainer' ? 'default' : 'success',
-    lastRewardDetail: `${titlePrefix} uses your current map level and route progress for scaling.`,
-    storySteps: [`You choose the ${titlePrefix.toLowerCase()}.`, `${region.name} opens into a live encounter path.`, 'Adventure begins immediately.'],
-    adventureLog: pushMapAdventureLog(current.adventureLog, `${titlePrefix} launched in ${region.name}.`, normalizedMode === 'boss' ? 'warning' : normalizedMode === 'trainer' ? 'default' : 'success', titlePrefix),
+    lastRewardTone: tone,
+    lastRewardDetail: `${titlePrefix} now rotates using map level ${regionState.mapLevel}, chain x${formatNumber(current.chain)}, and ${formatNumber(current.rareMeter)}% rare signal.`,
+    storySteps: [`You choose the ${titlePrefix.toLowerCase()}.`, `Route rotation ${formatNumber(nextAdventureRolls)} spins up a new enemy setup.`, 'Adventure begins immediately.'],
+    adventureLog: pushMapAdventureLog(current.adventureLog, `${titlePrefix} launched in ${region.name} against ${enemyPreview}.`, tone, titlePrefix),
     lastSearchAt: nowIso(),
   };
   appendActivityLog(user.meta, `${region.name} ${titlePrefix.toLowerCase()} launched.`);
@@ -12081,5 +12179,14 @@ export function purchasePersistentItem(userId, itemSlug, quantity = 1) {
   saveUserMeta(userId, user.meta);
   return getUserById(userId);
 }
+
+
+
+
+
+
+
+
+
 
 

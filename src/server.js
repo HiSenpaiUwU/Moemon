@@ -575,6 +575,102 @@ function renderCommandMenu(label, items) {
   `;
 }
 
+function hasDurableAccountStorage() {
+  return Boolean(config.worldBackupKvRestUrl)
+    || !process.env.VERCEL
+    || (process.env.MOEMON_DB_PATH && !String(process.env.MOEMON_DB_PATH).startsWith('/tmp'));
+}
+
+function renderViewModePanel(scope = 'view-mode') {
+  const safeScope = String(scope || 'view-mode').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '') || 'view-mode';
+  const groupName = safeScope + '-view-mode';
+  const options = [
+    { value: 'auto', label: 'Auto', description: 'Follow the current screen size.' },
+    { value: 'mobile', label: 'Mobile', description: 'Force a tighter 360dp-friendly fit.' },
+    { value: 'desktop', label: 'Desktop', description: 'Keep the roomier PC spacing.' },
+  ];
+  return `
+    <section class='panelish settings-card view-mode-card' data-view-mode-controls>
+      <div class='card-top'>
+        <div>
+          <h2>Screen Fit</h2>
+          <p class='muted'>If the page feels too large, too tight, or misaligned, switch the fit here.</p>
+        </div>
+        <span class='badge badge-default' data-view-mode-status>Auto</span>
+      </div>
+      <div class='settings-choice-grid view-mode-choice-grid'>
+        ${options.map((entry, index) => `
+          <label class='settings-choice view-mode-choice' data-view-mode-choice>
+            <input
+              type='radio'
+              name='${escapeHtml(groupName)}'
+              value='${escapeHtml(entry.value)}'
+              data-view-mode-input
+              ${index === 0 ? 'checked' : ''}
+            />
+            <strong>${escapeHtml(entry.label)}</strong>
+            <span class='muted'>${escapeHtml(entry.description)}</span>
+          </label>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderDeviceTransferImportPanel(mode = 'player') {
+  const durableSaveStorage = hasDurableAccountStorage();
+  return `
+    <section class='panelish settings-card device-transfer-card' data-device-transfer-panel data-device-transfer-mode='${escapeHtml(mode)}'>
+      <div class='card-top'>
+        <div>
+          <h2>Move From Another Device</h2>
+          <p class='muted'>${escapeHtml(durableSaveStorage
+            ? 'Normal login should work on any phone or PC here. If the live server copy is missing, paste a transfer code from the device that still has your account.'
+            : 'This deployment can fall back to browser-only recovery. To move from phone to PC or PC to phone, paste the transfer code from the device that still has your account.')}</p>
+        </div>
+        ${badge(durableSaveStorage ? 'Cross-device ready' : 'Transfer code fallback', durableSaveStorage ? 'success' : 'warning')}
+      </div>
+      <label>
+        <span>Transfer code</span>
+        <textarea rows='6' data-device-transfer-input spellcheck='false' placeholder='Paste the account transfer code from your other device'></textarea>
+      </label>
+      <div class='button-row'>
+        <button class='button accent' type='button' data-device-transfer-restore>Restore Here</button>
+        <button class='button ghost' type='button' data-device-transfer-use-login>Fill Login</button>
+      </div>
+      <p class='muted device-transfer-status' data-device-transfer-status>${escapeHtml(durableSaveStorage
+        ? 'Restore signs this browser in immediately. Use Fill Login if you want to keep your password flow.'
+        : 'Copy the code on the old device, then restore it here so the new device can keep the account.')}</p>
+    </section>
+  `;
+}
+
+function renderDeviceTransferExportPanel() {
+  const durableSaveStorage = hasDurableAccountStorage();
+  return `
+    <div class='device-transfer-export' data-device-transfer-export>
+      <div class='card-top'>
+        <div>
+          <h3>Cross-device transfer code</h3>
+          <p class='muted'>${escapeHtml(durableSaveStorage
+            ? 'You can still log in with username or email plus password on other devices. This code is the backup path if the server copy ever disappears.'
+            : 'Copy this from the device that still has your account, then paste it into the login page on the next device.')}</p>
+        </div>
+        ${badge(durableSaveStorage ? 'Backup fallback' : 'Move code', durableSaveStorage ? 'default' : 'warning')}
+      </div>
+      <label>
+        <span>Transfer code</span>
+        <textarea rows='6' readonly data-device-transfer-output spellcheck='false' placeholder='Open this page while signed in to generate a transfer code.'></textarea>
+      </label>
+      <div class='button-row'>
+        <button class='button accent' type='button' data-device-transfer-copy>Copy Code</button>
+        <button class='button ghost' type='button' data-device-transfer-select>Select Code</button>
+      </div>
+      <p class='muted device-transfer-status' data-device-transfer-export-status>Keep this private. Anyone with the code can restore this account.</p>
+    </div>
+  `;
+}
+
 function layout({ title, user, flash, body, wide = false, world = null }) {
   const worldState = world || getWorldState(user?.id || 0);
   const userSprite = user ? (CONTENT.playerSpriteMap.get(user.meta.avatarSlug) || CONTENT.playerSprites[0]) : null;
@@ -635,6 +731,7 @@ function layout({ title, user, flash, body, wide = false, world = null }) {
   const deviceSaveScript = deviceSavePayload ? `
       <script id="moemon-device-save" type="application/json">${serializeJsonForHtml(deviceSavePayload)}</script>
   ` : '';
+  const durableSaveStorage = hasDurableAccountStorage();
   const commandStatus = user ? `
     <div class="command-status panelish">
       ${renderSpriteAvatar(userSprite, { large: true })}
@@ -652,19 +749,23 @@ function layout({ title, user, flash, body, wide = false, world = null }) {
     <section class="mobile-quick-tray" aria-label="Fast mobile actions">
       <a class="mobile-quick-card tone-battle" href="${activeRun ? '/play' : '/play/new'}">
         <strong>${activeRun ? 'Resume Run' : 'Start Run'}</strong>
-        <small>${activeRun ? 'Jump back into your current wave and reward chain.' : 'Open the run board and launch a fresh climb.'}</small>
+        <small>${activeRun ? 'Continue the current wave fast.' : 'Launch a fresh climb.'}</small>
       </a>
-      <a class="mobile-quick-card tone-pokemon" href="/play/new?draft=partner-party-style">
-        <strong>Partner Style</strong>
-        <small>Launch the saved partner and party-slot squad in one tap.</small>
+      <a class="mobile-quick-card tone-profile" href="/trainer-card">
+        <strong>Missions</strong>
+        <small>Trainer goals, class progress, and rewards.</small>
+      </a>
+      <a class="mobile-quick-card tone-pokemon" href="/collection">
+        <strong>Storage</strong>
+        <small>Party, boxes, items, and rebuild tools.</small>
       </a>
       <a class="mobile-quick-card tone-trade" href="/minigames">
         <strong>Arcade</strong>
-        <small>Prize wheel, aura jackpot, and token farming loops.</small>
+        <small>Tokens, jackpots, and reward redemptions.</small>
       </a>
       <a class="mobile-quick-card tone-maps" href="/events">
-        <strong>Daily Pulse</strong>
-        <small>See limited banners, live events, and account-save status fast.</small>
+        <strong>Save Status</strong>
+        <small>${durableSaveStorage ? 'Durable save is active.' : 'Browser backup is your safety net.'}</small>
       </a>
     </section>
   ` : '';
@@ -959,6 +1060,80 @@ function renderWorldBoard(world) {
   `;
 }
 
+function mapSearchChanceRatioLabel(chance) {
+  const value = Number(chance || 0);
+  if (!Number.isFinite(value) || value <= 0) {
+    return 'Standby';
+  }
+  return `1 in ${formatNumber(Math.max(1, Math.round(1 / value)))}`;
+}
+
+function mapSearchToneForSpecies(species) {
+  const primaryType = species?.types?.[0] || 'normal';
+  if (['legendary', 'mythic'].includes(species?.rarity)) {
+    return 'psychic';
+  }
+  if (species?.rarity === 'rare') {
+    return 'warning';
+  }
+  if (['water', 'ice'].includes(primaryType)) {
+    return 'water';
+  }
+  if (['grass', 'bug', 'fairy'].includes(primaryType)) {
+    return 'success';
+  }
+  return 'default';
+}
+
+function renderMapSearchFeaturedSignal(species) {
+  const safeSpecies = CONTENT.speciesMap.get(species.id) || species;
+  return `
+    <article class="map-search-featured-signal tone-${escapeHtml(mapSearchToneForSpecies(safeSpecies))}">
+      ${renderMonsterPortrait(safeSpecies, { small: true, caption: `${titleLabel(safeSpecies.rarity || 'common')} signal` })}
+      <strong>${escapeHtml(safeSpecies.name)}</strong>
+      <small>${escapeHtml(safeSpecies.biome || 'Unknown biome')}</small>
+    </article>
+  `;
+}
+
+function renderMapSearchScene(region, searchBoard) {
+  if (!searchBoard) {
+    return '';
+  }
+  const category = region?.category || 'default';
+  const weatherLabel = titleLabel(region?.weatherNow || 'clear');
+  const biomeLabels = (region?.biomeHints?.length ? region.biomeHints : [searchBoard.biome || region?.name || 'Unknown route']).slice(0, 3);
+  const markers = (searchBoard.featuredSightings || []).slice(0, 4).map((species, index) => {
+    const initials = String(species.name || '??').replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || '??';
+    return `
+      <div class="map-search-scene-marker is-${index + 1} tone-${escapeHtml(mapSearchToneForSpecies(species))}">
+        <span>${escapeHtml(initials)}</span>
+      </div>
+    `;
+  }).join('');
+  return `
+    <section class="map-search-scene-shell theme-${escapeHtml(category)}">
+      <div class="map-search-scene-topline">
+        <strong>${escapeHtml(searchBoard.searchMomentum || searchBoard.personalityLabel || 'Adventure Route')}</strong>
+        <span>${escapeHtml(weatherLabel)} weather</span>
+      </div>
+      <div class="map-search-scene" aria-hidden="true">
+        <div class="map-search-scene-layer layer-water"></div>
+        <div class="map-search-scene-layer layer-path"></div>
+        <div class="map-search-scene-layer layer-grove"></div>
+        <div class="map-search-scene-layer layer-landmark"></div>
+        <div class="map-search-scene-layer layer-signal"></div>
+        ${markers}
+        <div class="map-search-scene-scout">YOU</div>
+        <div class="map-search-scene-hotspot">${escapeHtml(searchBoard.pendingEncounter ? 'LIVE' : 'SCAN')}</div>
+      </div>
+      <div class="map-search-scene-labels">
+        ${biomeLabels.map((label) => `<span>${escapeHtml(label)}</span>`).join('')}
+      </div>
+    </section>
+  `;
+}
+
 function renderMaps(state) {
   const searchBoard = state.searchBoard || null;
   const regionGroupMeta = [
@@ -969,6 +1144,7 @@ function renderMaps(state) {
     { slug: 'island', title: 'Island Routes', summary: 'Remote island circuits with low-RNG drops and rarer sightings.' },
   ];
   const selectedRegion = state.regions.find((region) => region.selected) || state.regions.find((region) => region.unlocked) || state.regions[0] || null;
+  const searchBoardRegion = searchBoard ? state.regions.find((region) => region.slug === searchBoard.regionSlug) || selectedRegion || null : null;
   const renderRegionActions = (region, options = {}) => {
     if (!region) {
       return '';
@@ -989,16 +1165,11 @@ function renderMaps(state) {
       </div>
     `;
   };
-  const featuredSightings = (searchBoard?.featuredSightings || []).map((species) => `
-    <article class="panelish map-search-sighting">
-      ${renderMonsterPortrait(CONTENT.speciesMap.get(species.id) || species, { small: true, caption: `${titleLabel(species.rarity)} signal` })}
-      <div class="badge-row compact-row">
-        ${(species.types || []).slice(0, 2).map((type) => badge(type, type)).join(' ')}
-        ${badge(titleLabel(species.rarity || 'common'), species.rarity === 'rare' ? 'warning' : ['legendary', 'mythic'].includes(species.rarity) ? 'psychic' : 'default')}
-      </div>
-      <p class="muted">${escapeHtml(species.name)} &middot; ${escapeHtml(species.biome || 'Unknown biome')}</p>
-    </article>
-  `).join('');
+  const featuredSignals = (searchBoard?.featuredSightings || []).map((species) => renderMapSearchFeaturedSignal(species)).join('');
+  const encounterRatio = searchBoard ? mapSearchChanceRatioLabel(searchBoard.encounterChance) : '';
+  const rareRatio = searchBoard ? mapSearchChanceRatioLabel(searchBoard.rareChance) : '';
+  const legendRatio = searchBoard?.legendaryChance ? mapSearchChanceRatioLabel(searchBoard.legendaryChance) : 'Legends asleep';
+  const legendSignalLabel = legendRatio === 'Legends asleep' ? legendRatio : `${legendRatio} legendary`;
   const routeAdventureLog = searchBoard?.adventureLog?.length
     ? searchBoard.adventureLog.map((entry) => `<li class="map-log-row tone-${escapeHtml(entry.tone || 'default')}"><span>${escapeHtml(entry.text)}</span><small class="muted">${escapeHtml(formatDateTime(entry.at))}</small></li>`).join('')
     : '<li class="map-log-row"><span>No route events logged yet.</span></li>';
@@ -1126,79 +1297,95 @@ function renderMaps(state) {
       ${renderWorldBoard(state.world)}
       ${searchBoard ? `
         <section class="grid-two summary-grid gap-top" id="map-search-console">
-          <article class="panelish map-search-board">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Adventure search</p>
-                <h2>${escapeHtml(searchBoard.regionName)} Route</h2>
-                <p class="muted">Every search now resolves into a real route event: encounter, clue, item, trainer EXP, or credits.</p>
+          <article class="panelish map-search-board retro-route-board">
+            <div class="map-search-arcade-frame">
+              <div class="map-search-arcade-titlebar">
+                <strong>${escapeHtml(searchBoard.regionName)}</strong>
+                <span>${escapeHtml(searchBoard.personalityLabel || 'Adventure Route')}</span>
               </div>
-              <div class="badge-row compact-row">
-                ${badge(searchBoard.currentChanceLabel, 'warning')}
-                ${badge(searchBoard.currentRareLabel, 'ghost')}
-                ${badge(searchBoard.chainLabel, searchBoard.chain ? 'success' : 'default')}
-                ${badge(searchBoard.personalityLabel, searchBoard.personalityTone || 'default')}
+              <div class="map-search-arcade-subhead">Special Pokemon</div>
+              <div class="map-search-featured-row">${featuredSignals || '<p class="muted map-search-empty-note">Special sightings will fill in as this board rotates.</p>'}</div>
+              <div class="map-search-scoreboard">
+                <div class="map-search-score-row">
+                  <span>Current Chances</span>
+                  <strong>${escapeHtml(encounterRatio)} encounter</strong>
+                  <small>${escapeHtml(searchBoard.currentChanceLabel)}</small>
+                </div>
+                <div class="map-search-score-row">
+                  <span>Rare Signal</span>
+                  <strong>${escapeHtml(rareRatio)} rare</strong>
+                  <small>${escapeHtml(searchBoard.currentRareLabel)} / ${escapeHtml(legendSignalLabel)}</small>
+                </div>
+                <div class="map-search-score-row map-search-score-row--level">
+                  <span>Map Level</span>
+                  <div class="map-search-score-progress">
+                    <strong>Lv ${formatNumber(searchBoard.mapLevel)}</strong>
+                    <div class="map-search-level-track"><span style="width:${Math.max(8, searchBoard.expPercent || 0)}%"></span></div>
+                  </div>
+                  <small>${formatNumber(searchBoard.expIntoLevel || 0)} / ${formatNumber(searchBoard.expForNextLevel || 1)} Map EXP</small>
+                </div>
+                <div class="map-search-score-row">
+                  <span>Total Searches</span>
+                  <strong>${formatNumber(searchBoard.totalSearches)}</strong>
+                  <small>Best chain ${formatNumber(searchBoard.bestChain || 0)} / ${escapeHtml(searchBoard.chainLabel || 'Chain cold')}</small>
+                </div>
+                <div class="map-search-score-row">
+                  <span>Last Encounter</span>
+                  <strong>${escapeHtml(searchBoard.lastEncounter || 'None logged yet')}</strong>
+                  <small>${escapeHtml(searchBoard.biome)} / ${escapeHtml(searchBoard.searchMomentum || '')}</small>
+                </div>
+              </div>
+              ${renderMapSearchScene(searchBoardRegion, searchBoard)}
+              <div class="button-row gap-top map-search-action-row">
+                <form method="post" action="/maps/search" class="inline-form">
+                  <input type="hidden" name="action" value="search" />
+                  <input type="hidden" name="regionSlug" value="${escapeHtml(searchBoard.regionSlug)}" />
+                  <button class="button primary" type="submit" ${searchBoard.pendingEncounter || searchBoard.runLocked ? 'disabled' : ''}>Search Adventure</button>
+                </form>
+                ${searchBoard.pendingEncounter ? `
+                  <form method="post" action="/maps/search" class="inline-form">
+                    <input type="hidden" name="action" value="battle" />
+                    <input type="hidden" name="regionSlug" value="${escapeHtml(searchBoard.regionSlug)}" />
+                    <button class="button accent" type="submit">Battle ${escapeHtml(searchBoard.pendingEncounter.species.name)}</button>
+                  </form>
+                  <form method="post" action="/maps/search" class="inline-form">
+                    <input type="hidden" name="action" value="flee" />
+                    <input type="hidden" name="regionSlug" value="${escapeHtml(searchBoard.regionSlug)}" />
+                    <button class="button ghost" type="submit">Release Signal</button>
+                  </form>
+                ` : ''}
+              </div>
+              ${searchBoard.runLocked ? '<p class="muted gap-top map-search-lock-note">Finish your current run before launching another route event.</p>' : ''}
+              <div class="map-search-result tone-${escapeHtml(searchBoard.lastResultTone || 'default')} gap-top" data-search-story-result>
+                <strong>${escapeHtml(searchBoard.pendingEncounter?.species?.name || searchBoard.lastRewardLabel || 'Route sweep complete')}</strong>
+                <span>${escapeHtml(searchBoard.lastResult || '')}</span>
+                ${searchBoard.lastRewardDetail ? `<small>${escapeHtml(searchBoard.lastRewardDetail)}</small>` : ''}
+              </div>
+              <p class="map-search-reward-summary">${escapeHtml(rewardSummary || 'Every route search now grants map progress and can trigger real side rewards even without a battle.')}</p>
+              <div class="grid-two compact-grid map-search-detail-grid gap-top">
+                <article class="panelish map-search-story-card" data-search-story ${searchBoard.storyFresh ? 'data-search-story-fresh="true"' : ''}>
+                  <div class="section-head">
+                    <div>
+                      <h3>Search story</h3>
+                      <p class="muted">Each scan now plays out like a route beat instead of a plain result line.</p>
+                    </div>
+                    ${badge(searchBoard.lastRewardLabel || 'Route sweep', searchBoard.lastRewardTone || 'default')}
+                  </div>
+                  <ol class="clean-list map-search-story-list" data-search-story-list>${routeStory || '<li>The route is waiting for the next search.</li>'}</ol>
+                </article>
+                <article class="panelish map-search-log-card">
+                  <div class="section-head">
+                    <div>
+                      <h3>Adventure log</h3>
+                      <p class="muted">Chains, clues, items, and fake-outs stay visible so progress feels alive.</p>
+                    </div>
+                    ${badge(searchBoard.rareMeterLabel || '0% rare signal', 'warning')}
+                  </div>
+                  <ul class="clean-list compact scroll-list map-adventure-log">${routeAdventureLog}</ul>
+                </article>
               </div>
             </div>
-            <div class="grid-two compact-grid map-search-sightings">${featuredSightings || '<p class="muted">Special sightings will fill in as this board rotates.</p>'}</div>
-            <div class="grid-two compact-grid map-search-detail-grid gap-top">
-              <article class="panelish map-search-story-card" data-search-story ${searchBoard.storyFresh ? 'data-search-story-fresh="true"' : ''}>
-                <div class="section-head">
-                  <div>
-                    <h3>Mini story every search</h3>
-                    <p class="muted">The route now plays out in beats before the final result lands.</p>
-                  </div>
-                  ${badge(searchBoard.lastRewardLabel || 'Route sweep', searchBoard.lastRewardTone || 'default')}
-                </div>
-                <ol class="clean-list map-search-story-list" data-search-story-list>${routeStory || '<li>The route is waiting for the next search.</li>'}</ol>
-              </article>
-              <article class="panelish map-search-log-card">
-                <div class="section-head">
-                  <div>
-                    <h3>Adventure log</h3>
-                    <p class="muted">Chains, clues, items, and fake-outs are saved here so the route feels alive.</p>
-                  </div>
-                  ${badge(searchBoard.rareMeterLabel || '0% rare signal', 'warning')}
-                </div>
-                <ul class="clean-list compact scroll-list map-adventure-log">${routeAdventureLog}</ul>
-              </article>
-            </div>
-            <div class="summary-facts gap-top">
-              <p><strong>Current chances:</strong> ${escapeHtml(searchBoard.currentChanceLabel)} / ${escapeHtml(searchBoard.currentRareLabel)} / ${escapeHtml(searchBoard.currentLegendLabel || 'Legends asleep')}</p>
-              <p><strong>Map level:</strong> ${formatNumber(searchBoard.mapLevel)} &middot; ${escapeHtml(searchBoard.searchMomentum || '')}</p>
-              <p><strong>Total searches:</strong> ${formatNumber(searchBoard.totalSearches)} &middot; Best chain ${formatNumber(searchBoard.bestChain || 0)}</p>
-              <p><strong>Last encounter:</strong> ${escapeHtml(searchBoard.lastEncounter || 'None logged yet')}</p>
-              <p><strong>Biome focus:</strong> ${escapeHtml(searchBoard.biome)} &middot; ${escapeHtml(searchBoard.personalityLabel || 'Adventure Route')}</p>
-            </div>
-            <div class="exp-meter gap-top"><span style="width:${Math.max(6, searchBoard.expPercent || 0)}%"></span><small>${formatNumber(searchBoard.expIntoLevel || 0)} / ${formatNumber(searchBoard.expForNextLevel || 1)} Map EXP</small></div>
-            <div class="button-row gap-top">
-              <form method="post" action="/maps/search" class="inline-form">
-                <input type="hidden" name="action" value="search" />
-                <input type="hidden" name="regionSlug" value="${escapeHtml(searchBoard.regionSlug)}" />
-                <button class="button primary" type="submit" ${searchBoard.pendingEncounter || searchBoard.runLocked ? 'disabled' : ''}>Search Adventure</button>
-              </form>
-              ${searchBoard.pendingEncounter ? `
-                <form method="post" action="/maps/search" class="inline-form">
-                  <input type="hidden" name="action" value="battle" />
-                  <input type="hidden" name="regionSlug" value="${escapeHtml(searchBoard.regionSlug)}" />
-                  <button class="button accent" type="submit">Battle ${escapeHtml(searchBoard.pendingEncounter.species.name)}</button>
-                </form>
-                <form method="post" action="/maps/search" class="inline-form">
-                  <input type="hidden" name="action" value="flee" />
-                  <input type="hidden" name="regionSlug" value="${escapeHtml(searchBoard.regionSlug)}" />
-                  <button class="button ghost" type="submit">Release Signal</button>
-                </form>
-              ` : ''}
-            </div>
-            ${searchBoard.runLocked ? '<p class="muted gap-top">Finish your current run before launching another route event.</p>' : ''}
-            <div class="map-search-result tone-${escapeHtml(searchBoard.lastResultTone || 'default')} gap-top" data-search-story-result>
-              <strong>${escapeHtml(searchBoard.pendingEncounter?.species?.name || searchBoard.lastRewardLabel || 'Route sweep complete')}</strong>
-              <span>${escapeHtml(searchBoard.lastResult || '')}</span>
-              ${searchBoard.lastRewardDetail ? `<small>${escapeHtml(searchBoard.lastRewardDetail)}</small>` : ''}
-            </div>
-            <p class="muted gap-top">${escapeHtml(rewardSummary || 'Every route search now grants map progress and can trigger real side rewards even without a battle.')}</p>
-          </article>
-          <article class="panelish map-radio-board">
+          </article>          <article class="panelish map-radio-board">
             <div class="section-head">
               <div>
                 <p class="eyebrow">Route radio</p>
@@ -1238,7 +1425,7 @@ function renderMaps(state) {
 }
 
 function renderSettings(state) {
-
+  const durableSaveStorage = hasDurableAccountStorage();
   const regionOptions = state.world.regions.map((region) => `<option value="${region.slug}" ${state.user.meta.preferredRegionSlug === region.slug ? 'selected' : ''} ${region.unlocked ? '' : 'disabled'}>${escapeHtml(region.name)}${region.unlocked ? '' : ' (Locked)'}</option>`).join('');
   const leagueOptions = state.leagues.map((league) => `<option value="${league.slug}" ${state.user.meta.favoriteLeagueSlug === league.slug ? 'selected' : ''}>${escapeHtml(league.name)}</option>`).join('');
   const emojiSetCards = state.emojiSets.map((entry) => `
@@ -1359,6 +1546,7 @@ function renderSettings(state) {
             <div class="settings-choice-grid">${fontCards}</div>
           </article>
         </section>
+        ${renderViewModePanel('settings')}
         <section class="panelish settings-card nested-panel">
           <h2>Chat Emoji Strip</h2>
           <div class="settings-choice-grid">${emojiSetCards}</div>
@@ -1366,12 +1554,16 @@ function renderSettings(state) {
         <section class="grid-two settings-grid">
           <article class="panelish settings-card nested-panel">
             <h2>Save & Recovery</h2>
-            <p class="muted">Accounts, trainer progress, collection, inventory, and runs save automatically. Signed device restore is also generated for this browser so account recovery is easier.</p>
+            <p class="muted">${escapeHtml(durableSaveStorage
+              ? 'Accounts, trainer progress, collection, inventory, and runs save automatically. Username or email plus password should work across phone and PC on this deployment.'
+              : 'Accounts, trainer progress, collection, inventory, and runs save automatically, but this deployment may fall back to browser-only recovery. Copy a transfer code before moving to another device.')}</p>
             <div class="badge-row compact-row gap-top">
               ${badge(`Lv ${formatNumber(state.progression?.profile?.level || 1)}`, 'success')}
               ${badge(`${formatNumber(state.capturedCollection?.length || 0)} stored`, 'default')}
               ${badge(`${formatNumber(state.favoriteEntries?.length || 0)} favorites`, 'warning')}
+              ${badge(durableSaveStorage ? 'Cross-device login' : 'Browser backup fallback', durableSaveStorage ? 'success' : 'warning')}
             </div>
+            ${renderDeviceTransferExportPanel()}
           </article>
           <article class="panelish settings-card nested-panel">
             <h2>Event Relay</h2>
@@ -5578,11 +5770,14 @@ export async function handleRequest(request, response) {
         title: 'Register',
         user,
         flash,
-        body: authCard('Create your account', 'Accounts are persistent and runs save automatically.', `
+        body: authCard('Create your account', hasDurableAccountStorage()
+          ? 'Create one account, then sign in from phone or PC with the same username or email and password.'
+          : 'Create your account here, then keep a transfer code in Settings if you want to move between phone and PC safely.', `
+          ${renderViewModePanel('register')}
           <form method="post" action="/register" class="stack-form">
-            <label><span>Username</span><input type="text" name="username" required /></label>
-            <label><span>Email</span><input type="email" name="email" required /></label>
-            <label><span>Password</span><input type="password" name="password" required /></label>
+            <label><span>Username</span><input type="text" name="username" required autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" /></label>
+            <label><span>Email</span><input type="email" name="email" required autocomplete="email" autocapitalize="none" autocorrect="off" spellcheck="false" /></label>
+            <label><span>Password</span><input type="password" name="password" required autocomplete="new-password" /></label>
             <button class="button primary" type="submit">Register</button>
           </form>
         `, '<p class="muted">The first account created becomes the admin account automatically.</p>'),
@@ -5618,14 +5813,17 @@ export async function handleRequest(request, response) {
         title: 'Player Login',
         user,
         flash,
-        body: authCard('Player Sign In', 'Use your username or email to continue a saved player account. Same-browser backups can restore multiple saved accounts automatically when the server copy is missing.', `
+        body: authCard('Player Sign In', hasDurableAccountStorage()
+          ? 'Use your username or email plus password to continue your player account from any phone or PC. A transfer code is available below as a backup path.'
+          : 'Use your username or email plus password to continue your player account. If this deployment forgets the live server copy, paste a transfer code from the device that still has your account.', `
+          ${renderViewModePanel('player-login')}
           <form method="post" action="/login" class="stack-form">
-            <label><span>Username or email</span><input type="text" name="login" required /></label>
-            <label><span>Password</span><input type="password" name="password" required /></label>
+            <label><span>Username or email</span><input type="text" name="login" required autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" /></label>
+            <label><span>Password</span><input type="password" name="password" required autocomplete="current-password" /></label>
             <input type="hidden" name="deviceBackup" value="" data-device-save-input data-device-save-mode="player" />
             <button class="button primary" type="submit">Player Login</button>
           </form>
-        `, '<p class="muted"><a href="/admin-login">Admin account?</a> <a href="/forgot-password">Need a reset link?</a></p>', 'data-device-restore-mode="player"'),
+        `, `${renderDeviceTransferImportPanel('player')}<p class='muted'><a href='/admin-login'>Admin account?</a> <a href='/forgot-password'>Need a reset link?</a></p>`, 'data-device-restore-mode="player"'),
       });
       return;
     }
@@ -5635,14 +5833,17 @@ export async function handleRequest(request, response) {
         title: 'Admin Login',
         user,
         flash,
-        body: authCard('Admin Sign In', 'Use the admin account email or username here. Player accounts are blocked from this route.', `
+        body: authCard('Admin Sign In', hasDurableAccountStorage()
+          ? 'Use the admin account email or username here from any phone or PC. Player accounts are blocked from this route.'
+          : 'Use the admin account email or username here. If the live server copy is missing, paste a transfer code from the admin device that still has the account.', `
+          ${renderViewModePanel('admin-login')}
           <form method="post" action="/admin-login" class="stack-form">
-            <label><span>Admin username or email</span><input type="text" name="login" required /></label>
-            <label><span>Password</span><input type="password" name="password" required /></label>
+            <label><span>Admin username or email</span><input type="text" name="login" required autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" /></label>
+            <label><span>Password</span><input type="password" name="password" required autocomplete="current-password" /></label>
             <input type="hidden" name="deviceBackup" value="" data-device-save-input data-device-save-mode="admin" />
             <button class="button warning" type="submit">Admin Login</button>
           </form>
-        `, '<p class="muted"><a href="/login">Player login</a> <a href="/forgot-password">Need a reset link?</a></p>', 'data-device-restore-mode="admin"'),
+        `, `${renderDeviceTransferImportPanel('admin')}<p class='muted'><a href='/login'>Player login</a> <a href='/forgot-password'>Need a reset link?</a></p>`, 'data-device-restore-mode="admin"'),
       });
       return;
     }
@@ -5703,8 +5904,9 @@ export async function handleRequest(request, response) {
         user,
         flash,
         body: authCard('Password reset', 'If the email exists, a reset link will be sent.', `
+          ${renderViewModePanel('forgot-password')}
           <form method="post" action="/forgot-password" class="stack-form">
-            <label><span>Email</span><input type="email" name="email" required /></label>
+            <label><span>Email</span><input type="email" name="email" required autocomplete="email" autocapitalize="none" autocorrect="off" spellcheck="false" /></label>
             <button class="button primary" type="submit">Send reset email</button>
           </form>
         `),
@@ -5730,9 +5932,10 @@ export async function handleRequest(request, response) {
         user,
         flash,
         body: authCard('Choose a new password', 'Use a strong password with uppercase, lowercase, and numbers.', `
+          ${renderViewModePanel('reset-password')}
           <form method="post" action="/reset-password" class="stack-form">
             <input type="hidden" name="token" value="${escapeHtml(token)}" />
-            <label><span>New password</span><input type="password" name="password" required /></label>
+            <label><span>New password</span><input type="password" name="password" required autocomplete="new-password" /></label>
             <button class="button primary" type="submit">Reset password</button>
           </form>
         `),
@@ -6471,6 +6674,11 @@ if (isDirectRun) {
     console.log(`Moemon Arena listening on ${config.appOrigin}`);
   });
 }
+
+
+
+
+
 
 
 
