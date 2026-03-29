@@ -1237,10 +1237,10 @@ function initBattleLab() {
         <p class="eyebrow">${label}</p>
         <h3>${fighter.name}</h3>
         <div class="badge-row compact-row">${fighter.types.map((type) => `<span class="badge badge-${type}">${titleLabel(type)}</span>`).join(' ')}</div>
-        <p class="muted">Lv ${fighter.level} � Total ${statTotal(fighter.stats)}</p>
+        <p class="muted">Lv ${fighter.level} - Total ${statTotal(fighter.stats)}</p>
         <div class="health hp-bar"><span style="width:${hpPercent}%"></span></div>
-        <p class="battle-lab-statline">HP ${fighter.hp}/${fighter.stats.hp}${fighter.defending ? ' � Guarding' : ''}</p>
-        <p class="battle-lab-statline">Atk ${fighter.stats.atk} � Def ${fighter.stats.def} � SpA ${fighter.stats.spa} � SpD ${fighter.stats.spd} � Spe ${fighter.stats.spe}</p>
+        <p class="battle-lab-statline">HP ${fighter.hp}/${fighter.stats.hp}${fighter.defending ? ' - Guarding' : ''}</p>
+        <p class="battle-lab-statline">Atk ${fighter.stats.atk} - Def ${fighter.stats.def} - SpA ${fighter.stats.spa} - SpD ${fighter.stats.spd} - Spe ${fighter.stats.spe}</p>
       `;
     };
     const setLog = (message) => {
@@ -1444,10 +1444,45 @@ function closestFromTarget(target, selector) {
   return target instanceof Element ? target.closest(selector) : null;
 }
 
+function syncCommandMenuState() {
+  document.body.classList.toggle('command-menu-open', !!document.querySelector('[data-command-menu].is-open'));
+}
+
+function positionCommandMenuPanel(menu) {
+  const trigger = menu.querySelector('[data-command-menu-trigger]');
+  const panel = menu.querySelector('[data-command-menu-panel]');
+  if (!trigger || !panel) {
+    return;
+  }
+  if (window.matchMedia('(max-width: 760px)').matches) {
+    const triggerRect = trigger.getBoundingClientRect();
+    const top = Math.max(12, Math.round(triggerRect.bottom + 10));
+    menu.style.setProperty('--command-menu-top', `${top}px`);
+    return;
+  }
+  menu.style.removeProperty('--command-menu-top');
+}
+
+function setCommandMenuOpen(menu, open) {
+  const trigger = menu.querySelector('[data-command-menu-trigger]');
+  const panel = menu.querySelector('[data-command-menu-panel]');
+  menu.classList.toggle('is-open', open);
+  if (trigger) {
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  if (panel) {
+    panel.hidden = !open;
+  }
+  if (open) {
+    positionCommandMenuPanel(menu);
+  }
+  syncCommandMenuState();
+}
+
 function closeOpenCommandMenus(exceptMenu = null) {
-  document.querySelectorAll('[data-command-menu][open]').forEach((menu) => {
+  document.querySelectorAll('[data-command-menu].is-open').forEach((menu) => {
     if (menu !== exceptMenu) {
-      menu.open = false;
+      setCommandMenuOpen(menu, false);
     }
   });
 }
@@ -1455,28 +1490,32 @@ function closeOpenCommandMenus(exceptMenu = null) {
 function initCommandMenus(root = document) {
   root.querySelectorAll('[data-command-menu]').forEach((menu) => {
     if (menu.dataset.commandHydrated === 'true') {
+      if (menu.classList.contains('is-open')) {
+        positionCommandMenuPanel(menu);
+      }
       return;
     }
     menu.dataset.commandHydrated = 'true';
 
-    const summary = menu.querySelector('summary');
-    if (summary) {
-      summary.addEventListener('click', (event) => {
+    const trigger = menu.querySelector('[data-command-menu-trigger]');
+    if (trigger) {
+      trigger.addEventListener('click', (event) => {
         event.preventDefault();
-        const nextOpen = !menu.open;
+        const nextOpen = !menu.classList.contains('is-open');
         closeOpenCommandMenus(nextOpen ? menu : null);
-        menu.open = nextOpen;
+        setCommandMenuOpen(menu, nextOpen);
       });
     }
 
     menu.querySelectorAll('.command-link').forEach((link) => {
       link.addEventListener('click', () => {
-        menu.open = false;
+        setCommandMenuOpen(menu, false);
       });
     });
   });
 
   if (moemonAppState.commandMenusReady) {
+    syncCommandMenuState();
     return;
   }
   moemonAppState.commandMenusReady = true;
@@ -1492,6 +1531,12 @@ function initCommandMenus(root = document) {
     if (event.key === 'Escape') {
       closeOpenCommandMenus();
     }
+  });
+
+  window.addEventListener('resize', () => {
+    document.querySelectorAll('[data-command-menu].is-open').forEach((menu) => {
+      positionCommandMenuPanel(menu);
+    });
   });
 }
 
@@ -2289,8 +2334,6 @@ syncDeviceSaveSnapshot();
 hydrateDeviceSaveInputs();
 initDeviceSaveRestore();
 initSoftNavigation();
-
-
 
 
 

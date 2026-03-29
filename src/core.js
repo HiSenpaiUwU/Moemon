@@ -9227,7 +9227,11 @@ async function ensureBootstrapAdminFromEnv() {
     if (password && syncPassword) {
       db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), existing.id);
     }
-    await flushPendingWorldBackup();
+    try {
+      await flushPendingWorldBackup();
+    } catch (error) {
+      console.error('[moemon] Failed to persist bootstrap admin changes:', error);
+    }
     return getUserById(existing.id);
   }
 
@@ -9237,11 +9241,19 @@ async function ensureBootstrapAdminFromEnv() {
   }
 
   const user = createAdmin(email, password, username);
-  await flushPendingWorldBackup();
+  try {
+    await flushPendingWorldBackup();
+  } catch (error) {
+    console.error('[moemon] Failed to persist bootstrap admin changes:', error);
+  }
   return user;
 }
 
-await ensureBootstrapAdminFromEnv();
+try {
+  await ensureBootstrapAdminFromEnv();
+} catch (error) {
+  console.error('[moemon] Failed to bootstrap admin from env:', error);
+}
 
 export function getAdminOverview() {
   const users = listUsers(30);
@@ -12069,4 +12081,5 @@ export function purchasePersistentItem(userId, itemSlug, quantity = 1) {
   saveUserMeta(userId, user.meta);
   return getUserById(userId);
 }
+
 

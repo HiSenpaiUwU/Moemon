@@ -541,13 +541,14 @@ function buildCollectionDashboardData(state) {
 
 function renderCommandMenu(label, items) {
   const menuSlug = String(label || 'menu').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'menu';
+  const panelId = `command-menu-panel-${menuSlug}`;
   return `
-    <details class="command-menu command-menu-${escapeHtml(menuSlug)}" data-command-menu>
-      <summary>
+    <div class="command-menu command-menu-${escapeHtml(menuSlug)}" data-command-menu>
+      <button class="command-menu-trigger" type="button" data-command-menu-trigger aria-expanded="false" aria-controls="${panelId}">
         <span class="command-menu-label">${escapeHtml(label)}</span>
         <span class="command-menu-count">${formatNumber(items.length)}</span>
-      </summary>
-      <div class="command-menu-panel">
+      </button>
+      <div class="command-menu-panel" id="${panelId}" data-command-menu-panel hidden>
         <div class="command-menu-panel-head">
           <p class="eyebrow">Quick Actions</p>
           <strong>${escapeHtml(label)} deck</strong>
@@ -570,7 +571,7 @@ function renderCommandMenu(label, items) {
           <span>Built for quick mobile jumps</span>
         </div>
       </div>
-    </details>
+    </div>
   `;
 }
 
@@ -2922,8 +2923,8 @@ function renderBattleFaceoffPanel(monster, options = {}) {
         <div class="battle-active-copy">
           <div class="badge-row compact-row">${identityBadges}</div>
           <div class="health hp-bar battle-active-health"><span style="width:${hpPercent}%"></span></div>
-          <p class="battle-active-note">${escapeHtml(ability?.name || 'Battle Aura')} � ${escapeHtml(heldItem?.name || 'No held item')}</p>
-          <p class="battle-active-note">${escapeHtml(aura?.name || 'Standard aura')} � ${escapeHtml(nature?.name || 'Neutral nature')}</p>
+          <p class="battle-active-note">${escapeHtml(ability?.name || 'Battle Aura')} - ${escapeHtml(heldItem?.name || 'No held item')}</p>
+          <p class="battle-active-note">${escapeHtml(aura?.name || 'Standard aura')} - ${escapeHtml(nature?.name || 'Neutral nature')}</p>
           <div class="battle-active-stats">
             <span>Atk ${formatNumber(monster.stats.atk)}</span>
             <span>Def ${formatNumber(monster.stats.def)}</span>
@@ -3001,7 +3002,7 @@ function renderBattleRosterCard(monster, options = {}) {
       <div class="battle-roster-icon palette-${escapeHtml(paletteForType(species.types?.[0]))}">${escapeHtml((monster.nickname || monster.name).slice(0, 2).toUpperCase())}</div>
       <div class="battle-roster-copy">
         <strong>${escapeHtml(battleMonsterName(monster))}</strong>
-        <span>Lv ${formatNumber(monster.level)} � HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
+        <span>Lv ${formatNumber(monster.level)} - HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
         <div class="health hp-bar battle-roster-health"><span style="width:${hpPercent}%"></span></div>
       </div>
       <span class="battle-roster-state">${escapeHtml(stateLabel)}</span>
@@ -3025,7 +3026,7 @@ function renderBattleSwitchCard(monster, index, activeIndex) {
         <div class="battle-roster-icon palette-${escapeHtml(paletteForType(species.types?.[0]))}">${escapeHtml((monster.nickname || monster.name).slice(0, 2).toUpperCase())}</div>
         <div class="battle-roster-copy">
           <strong>${escapeHtml(monsterLabel(monster))}</strong>
-          <span>Lv ${formatNumber(monster.level)} � HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
+          <span>Lv ${formatNumber(monster.level)} - HP ${formatNumber(monster.currentHp)}/${formatNumber(monster.stats.hp)}</span>
         </div>
       </div>
       <div class="health hp-bar battle-roster-health"><span style="width:${hpPercent}%"></span></div>
@@ -3106,7 +3107,7 @@ function renderBattleView(run) {
             ${badge(encounter.phase || 'day', encounter.phase === 'night' ? 'ghost' : 'warning')}
             ${badge(momentumLabel, momentumTone)}
           </div>
-          <p class="muted">Biome ${escapeHtml(encounter.biome)} � ability ${escapeHtml(abilityInfo(activePlayer)?.name || 'Battle Aura')} � held item ${escapeHtml(activeHeldItem?.name || 'none')} � ${escapeHtml(encounter.ambientEvent?.label || 'Quiet route')}</p>
+          <p class="muted">Biome ${escapeHtml(encounter.biome)} - ability ${escapeHtml(abilityInfo(activePlayer)?.name || 'Battle Aura')} - held item ${escapeHtml(activeHeldItem?.name || 'none')} - ${escapeHtml(encounter.ambientEvent?.label || 'Quiet route')}</p>
         </div>
         <form method="post" action="/play/abandon" class="inline-form">
           <button class="button danger" type="submit">Abandon run</button>
@@ -4473,7 +4474,7 @@ function renderEmojiPicker(targetInputId, pickerSlug, categories = []) {
   }
   const tabs = categories.map((category, index) => `
     <button class="tab-button ${index === 0 ? 'is-active' : ''}" type="button" data-tab-target="${escapeHtml(`${pickerSlug}-${category.slug}`)}">
-      <span>${escapeHtml(category.icon || 'ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢')}</span>
+      <span>${escapeHtml(category.icon || '*')}</span>
       <span>${escapeHtml(category.name)}</span>
     </button>
   `).join('');
@@ -6470,9 +6471,6 @@ if (isDirectRun) {
     console.log(`Moemon Arena listening on ${config.appOrigin}`);
   });
 }
-
-
-
 
 
 

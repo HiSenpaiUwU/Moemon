@@ -2954,8 +2954,12 @@ textarea {
   position: relative;
 }
 
-.command-menu > summary {
-  list-style: none;
+.command-menu.is-open {
+  z-index: 72;
+}
+
+.command-menu-trigger {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
@@ -2969,6 +2973,7 @@ textarea {
   color: var(--text);
   cursor: pointer;
   font-weight: 700;
+  text-align: left;
 }
 
 .command-menu-label {
@@ -2989,22 +2994,27 @@ textarea {
   line-height: 1;
 }
 
-.command-menu > summary::-webkit-details-marker {
-  display: none;
+.command-menu-trigger:focus-visible {
+  outline: 2px solid rgba(124, 201, 255, 0.68);
+  outline-offset: 2px;
 }
 
-.command-menu[open] > summary,
-.command-menu > summary:hover,
+.command-menu.is-open .command-menu-trigger,
+.command-menu-trigger:hover,
 .auth-topnav a:hover {
   border-color: rgba(245, 183, 93, 0.42);
   background: linear-gradient(180deg, rgba(24, 76, 173, 0.92), rgba(17, 88, 198, 0.82));
   color: #ffffff;
 }
 
-.command-menu[open] .command-menu-count,
-.command-menu > summary:hover .command-menu-count {
+.command-menu.is-open .command-menu-count,
+.command-menu-trigger:hover .command-menu-count {
   background: rgba(255, 255, 255, 0.16);
   border-color: rgba(255, 255, 255, 0.2);
+}
+
+.command-menu-panel[hidden] {
+  display: none !important;
 }
 
 .command-menu-panel {
@@ -3480,6 +3490,7 @@ body.page-market .mobile-command-trade {
 @media (max-width: 760px) {
   body {
     font-size: 14px;
+    overflow-x: hidden;
   }
 
   .signed-in-shell .page-shell,
@@ -3669,18 +3680,16 @@ body.page-market .mobile-command-trade {
   }
 
   .command-menu,
-  .command-menu[open],
-  .command-menu > summary,
+  .command-menu-trigger,
   .auth-topnav a {
     width: auto;
   }
 
-  .command-menu,
-  .command-menu[open] {
+  .command-menu {
     flex: 0 0 auto;
   }
 
-  .command-menu > summary,
+  .command-menu-trigger,
   .auth-topnav a {
     min-height: 38px;
     min-width: 94px;
@@ -3689,18 +3698,14 @@ body.page-market .mobile-command-trade {
     border-radius: 12px;
   }
 
-  .command-menu[open] > summary {
-    margin-bottom: 0;
-  }
-
   .command-menu-panel {
     position: fixed;
     left: 12px;
     right: 12px;
-    bottom: calc(88px + env(safe-area-inset-bottom, 0px));
-    top: auto;
+    top: var(--command-menu-top, 112px);
+    bottom: auto;
     width: auto;
-    max-height: min(58vh, 440px);
+    max-height: calc(100dvh - var(--command-menu-top, 112px) - 86px - env(safe-area-inset-bottom, 0px));
     overflow: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
@@ -3723,6 +3728,52 @@ body.page-market .mobile-command-trade {
 
   .command-link small {
     font-size: 0.82rem;
+  }
+
+  body.command-menu-open {
+    overflow: hidden;
+  }
+
+  .badge {
+    padding: 5px 8px;
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+  }
+
+  .section-head,
+  .card-top,
+  .battle-faceoff-subhead,
+  .battle-console-head,
+  .battle-active-head,
+  .command-link-topline {
+    flex-wrap: wrap;
+  }
+
+  .inline-form {
+    display: flex;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .inline-form .button,
+  .inline-form .link-button,
+  .inline-form input,
+  .inline-form select {
+    width: 100%;
+  }
+
+  .battle-badges,
+  .minigame-page .badge-row {
+    gap: 6px;
+  }
+
+  .battle-board-ribbon span:not(.battle-board-chip) {
+    font-size: 0.74rem;
+  }
+
+  .minigame-page .checkbox-row-inline {
+    min-height: 46px;
+    padding: 10px 12px;
   }
 
   .mobile-quick-tray {
@@ -3826,6 +3877,31 @@ body.page-market .mobile-command-trade {
     min-height: 46px;
     font-size: 0.64rem;
     padding: 6px 4px;
+  }
+
+  .section-head,
+  .card-top,
+  .battle-faceoff-subhead,
+  .battle-console-head,
+  .battle-active-head,
+  .command-link-topline {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .button-row,
+  .action-strip,
+  .inline-form {
+    width: 100%;
+  }
+
+  .button-row > .button,
+  .button-row > .link-button,
+  .button-row > a.button,
+  .button-row > form,
+  .action-strip > .button,
+  .action-strip > .link-button {
+    width: 100%;
   }
 }
 
@@ -4590,5 +4666,3 @@ body.page-market .mobile-command-trade {
     gap: 8px;
   }
 }
-
-
