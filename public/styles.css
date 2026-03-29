@@ -3412,6 +3412,13 @@ textarea {
   min-width: 0;
 }
 
+body.signed-in-shell .topbar {
+  position: relative;
+  top: auto;
+  z-index: 40;
+}
+
+
 .topbar .brand {
   display: inline-block;
   margin-bottom: 6px;
@@ -3456,6 +3463,11 @@ textarea {
 
 .command-logout {
   min-width: 108px;
+}
+
+.command-logout.is-armed {
+  border-color: rgba(245, 183, 93, 0.52);
+  background: linear-gradient(180deg, rgba(186, 84, 22, 0.96), rgba(148, 63, 18, 0.92));
 }
 
 .command-bar,
@@ -3552,11 +3564,14 @@ textarea {
   background: rgba(5, 10, 18, 0.38);
 }
 
+
+
 .command-menu-panel {
   position: absolute;
   top: calc(100% + 10px);
   left: 0;
   width: min(368px, calc(100vw - 72px));
+  z-index: 70;
   display: grid;
   gap: 12px;
   padding: 16px;
@@ -5479,6 +5494,14 @@ body.view-desktop .topbar {
   border-radius: 30px !important;
   backdrop-filter: blur(20px) !important;
 }
+
+body.signed-in-shell.view-desktop .topbar {
+  position: relative !important;
+  top: auto !important;
+  z-index: 40 !important;
+  backdrop-filter: none !important;
+}
+
 
 body.view-desktop .world-marquee {
   display: flex !important;

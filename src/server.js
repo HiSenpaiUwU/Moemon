@@ -2194,8 +2194,8 @@ function renderHub(state) {
       summary: 'Battle Area, legendary boards, and island routes stay grouped together now.',
       entries: [
         { title: 'Battle Area', href: '/social', tone: 'primary', body: 'Casual, ranked, hard, and advanced arena queues plus live activity.' },
-        { title: 'Legendary Areas', href: '/maps', tone: 'accent', body: `${regionNamesFor('sanctuary')} / ${regionNamesFor('ruins')}` },
-        { title: 'Island Routes', href: '/maps', tone: 'ghost', body: regionNamesFor('island', 'Island expeditions unlock deeper in the world board.') },
+        { title: 'Legendary Areas', href: '/maps#route-archive', tone: 'accent', hardNav: true, body: `${regionNamesFor('sanctuary')} / ${regionNamesFor('ruins')}` },
+        { title: 'Island Routes', href: '/maps#route-archive', tone: 'ghost', hardNav: true, body: regionNamesFor('island', 'Island expeditions unlock deeper in the world board.') },
       ],
     },
     {
@@ -2239,7 +2239,7 @@ function renderHub(state) {
           <article class="panelish hub-link-card">
             <h3>${escapeHtml(entry.title)}</h3>
             <p class="muted">${escapeHtml(entry.body)}</p>
-            <a class="button ${escapeHtml(entry.tone)}" href="${escapeHtml(entry.href)}">Open</a>
+            <a class="button ${escapeHtml(entry.tone)}" href="${escapeHtml(entry.href)}"${entry.hardNav ? ' data-hard-nav="true"' : ''}>Open</a>
           </article>
         `).join('')}
       </div>
@@ -6669,16 +6669,60 @@ export const server = http.createServer(handleRequest);
 
 const isDirectRun = !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 
-if (isDirectRun) {
-  server.listen(config.port, () => {
-    console.log(`Moemon Arena listening on ${config.appOrigin}`);
+function localOriginForPort(port) {
+  if (process.env.APP_ORIGIN) {
+    return config.appOrigin;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return `http://localhost:${port}`;
+}
+
+function listenWithPortFallback(targetServer, preferredPort, maxAttempts = 10) {
+  return new Promise((resolve, reject) => {
+    const tryListen = (port, attemptsRemaining) => {
+      const onError = (error) => {
+        targetServer.removeListener('listening', onListening);
+        if (error?.code === 'EADDRINUSE' && attemptsRemaining > 0) {
+          tryListen(port + 1, attemptsRemaining - 1);
+          return;
+        }
+        reject(error);
+      };
+
+      const onListening = () => {
+        targetServer.removeListener('error', onError);
+        const address = targetServer.address();
+        const actualPort = typeof address === 'object' && address ? address.port : port;
+        resolve(actualPort);
+      };
+
+      targetServer.once('error', onError);
+      targetServer.once('listening', onListening);
+      targetServer.listen(port);
+    };
+
+    tryListen(preferredPort, maxAttempts);
   });
 }
 
+async function startDirectServer() {
+  try {
+    const requestedPort = Number(process.env.PORT || config.port || 3000);
+    const actualPort = await listenWithPortFallback(server, requestedPort);
+    config.port = actualPort;
+    config.appOrigin = localOriginForPort(actualPort);
+    if (actualPort !== requestedPort) {
+      console.warn(`[moemon] Port ${requestedPort} is already in use. Switched to ${actualPort} instead.`);
+    }
+    console.log(`Moemon Arena listening on ${config.appOrigin}`);
+  } catch (error) {
+    console.error(`[moemon] Failed to start server: ${error.message}`);
+    process.exitCode = 1;
+  }
+}
 
-
-
-
-
-
-
+if (isDirectRun) {
+  startDirectServer();
+}

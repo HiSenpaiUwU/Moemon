@@ -1562,11 +1562,25 @@ function findCommandMenuPanel(menu) {
   return menu.querySelector('[data-command-menu-panel]');
 }
 
+function clearCommandMenuPanelLayout(panel) {
+  if (!panel) {
+    return;
+  }
+  panel.style.removeProperty('--command-menu-top');
+  panel.style.removeProperty('--command-menu-max-height');
+  panel.style.removeProperty('position');
+  panel.style.removeProperty('top');
+  panel.style.removeProperty('left');
+  panel.style.removeProperty('right');
+  panel.style.removeProperty('max-height');
+}
+
 function restoreCommandMenuPanel(menu) {
   const panel = findCommandMenuPanel(menu);
   if (!panel) {
     return;
   }
+  clearCommandMenuPanelLayout(panel);
   if (panel.parentElement !== menu) {
     menu.appendChild(panel);
   }
@@ -1579,6 +1593,11 @@ function syncCommandMenuState() {
     return;
   }
   const showLayer = hasOpen && isMobileCommandMenuLayout() && !!commandMenuLayer.querySelector('[data-command-menu-panel]');
+  if (showLayer) {
+    commandMenuLayer.dataset.layout = 'mobile';
+  } else {
+    delete commandMenuLayer.dataset.layout;
+  }
   commandMenuLayer.hidden = !showLayer;
 }
 
@@ -1595,12 +1614,11 @@ function positionCommandMenuPanel(menu) {
     }
     const triggerRect = trigger.getBoundingClientRect();
     const top = Math.max(12, Math.round(triggerRect.bottom + 10));
+    clearCommandMenuPanelLayout(panel);
     panel.style.setProperty('--command-menu-top', `${top}px`);
     panel.style.setProperty('--command-menu-max-height', `calc(100dvh - ${top}px - 86px - env(safe-area-inset-bottom, 0px))`);
     return;
   }
-  panel.style.removeProperty('--command-menu-top');
-  panel.style.removeProperty('--command-menu-max-height');
   restoreCommandMenuPanel(menu);
 }
 
@@ -1620,8 +1638,6 @@ function setCommandMenuOpen(menu, open) {
     positionCommandMenuPanel(menu);
   } else {
     panel.hidden = true;
-    panel.style.removeProperty('--command-menu-top');
-    panel.style.removeProperty('--command-menu-max-height');
     restoreCommandMenuPanel(menu);
   }
   syncCommandMenuState();
@@ -1697,6 +1713,23 @@ function initCommandMenus(root = document) {
     });
     syncCommandMenuState();
   });
+
+  let commandMenuScrollFrame = 0;
+  window.addEventListener('scroll', () => {
+    if (!isMobileCommandMenuLayout() || !document.querySelector('[data-command-menu].is-open')) {
+      return;
+    }
+    if (commandMenuScrollFrame) {
+      return;
+    }
+    commandMenuScrollFrame = window.requestAnimationFrame(() => {
+      commandMenuScrollFrame = 0;
+      document.querySelectorAll('[data-command-menu].is-open').forEach((menu) => {
+        positionCommandMenuPanel(menu);
+      });
+      syncCommandMenuState();
+    });
+  }, { passive: true });
 }
 function safeSessionStorageSet(key, value) {
   try {
@@ -2201,9 +2234,53 @@ function initAutoRestoreGuards(root = document) {
       return;
     }
     form.dataset.autoRestoreGuard = 'true';
-    form.addEventListener('submit', () => {
-      safeSessionStorageSet(DEVICE_AUTO_RESTORE_SKIP_KEY, '1');
-      safeSessionStorageRemove(DEVICE_AUTO_RESTORE_ATTEMPT_KEY);
+    const button = form.querySelector('button[type="submit"]');
+    let confirmTimer = 0;
+    const resetLogoutGuard = () => {
+      form.dataset.logoutConfirm = '';
+      if (button) {
+        button.textContent = 'Logout';
+        button.classList.remove('is-armed');
+        button.disabled = false;
+      }
+      if (confirmTimer) {
+        window.clearTimeout(confirmTimer);
+        confirmTimer = 0;
+      }
+    };
+    form.addEventListener('submit', (event) => {
+      if (form.dataset.logoutConfirm === 'armed') {
+        form.dataset.logoutConfirm = 'confirmed';
+        if (button) {
+          button.textContent = 'Logging out...';
+          button.classList.remove('is-armed');
+          button.disabled = true;
+        }
+        if (confirmTimer) {
+          window.clearTimeout(confirmTimer);
+          confirmTimer = 0;
+        }
+        safeSessionStorageSet(DEVICE_AUTO_RESTORE_SKIP_KEY, '1');
+        safeSessionStorageRemove(DEVICE_AUTO_RESTORE_ATTEMPT_KEY);
+        return;
+      }
+      event.preventDefault();
+      form.dataset.logoutConfirm = 'armed';
+      if (button) {
+        button.textContent = 'Tap Again To Logout';
+        button.classList.add('is-armed');
+      }
+      if (confirmTimer) {
+        window.clearTimeout(confirmTimer);
+      }
+      confirmTimer = window.setTimeout(() => {
+        resetLogoutGuard();
+      }, 4000);
+    });
+    form.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && form.dataset.logoutConfirm === 'armed') {
+        resetLogoutGuard();
+      }
     });
   });
 
